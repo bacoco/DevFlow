@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-ingestion
+  namespace: devflow
+  labels:
+    app: data-ingestion
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: data-ingestion
+  template:
+    metadata:
+      labels:
+        app: data-ingestion
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+      - name: data-ingestion
+        image: devflow/data-ingestion:latest
+        ports:
+        - containerPort: 3001
+        env:
+        - name: PORT
+          value: "3001"
+        - name: GRACEFUL_SHUTDOWN_TIMEOUT
+          value: "40000"
+        envFrom:
+        - configMapRef:
+            name: devflow-config
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+            httpHeaders:
+            - name: X-Health-Check
+              value: liveness
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 3001
+            httpHeaders:
+            - name: X-Health-Check
+              value: readiness
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: 3001
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30
+          successThreshold: 1
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 10 && kill -SIGTERM 1"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-ingestion-service
+  namespace: devflow
+spec:
+  selector:
+    app: data-ingestion
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 3001
+  type: ClusterIP

@@ -1,0 +1,43 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api-gateway-pdb
+  namespace: devflow
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: data-ingestion-pdb
+  namespace: devflow
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: data-ingestion
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: stream-processing-pdb
+  namespace: devflow
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: stream-processing
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ml-pipeline-pdb
+  namespace: devflow
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: ml-pipeline

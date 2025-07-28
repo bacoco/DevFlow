@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stream-processing
+  namespace: devflow
+  labels:
+    app: stream-processing
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: stream-processing
+  template:
+    metadata:
+      labels:
+        app: stream-processing
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+      - name: stream-processing
+        image: devflow/stream-processing:latest
+        ports:
+        - containerPort: 3002
+        env:
+        - name: PORT
+          value: "3002"
+        - name: GRACEFUL_SHUTDOWN_TIMEOUT
+          value: "55000"
+        - name: INFLUXDB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: devflow-secrets
+              key: influxdb-token
+        envFrom:
+        - configMapRef:
+            name: devflow-config
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "1000m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+            httpHeaders:
+            - name: X-Health-Check
+              value: liveness
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 3002
+            httpHeaders:
+            - name: X-Health-Check
+              value: readiness
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: 3002
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30
+          successThreshold: 1
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 15 && kill -SIGTERM 1"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: stream-processing-service
+  namespace: devflow
+spec:
+  selector:
+    app: stream-processing
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 3002
+  type: ClusterIP

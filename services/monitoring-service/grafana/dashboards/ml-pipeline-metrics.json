@@ -1,0 +1,105 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "DevFlow Intelligence - ML Pipeline Metrics",
+    "tags": ["devflow", "ml", "pipeline"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Model Inference Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(ml_model_inferences_total[5m])",
+            "legendFormat": "{{model_name}} v{{model_version}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Inferences/sec"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": 2,
+        "title": "Model Accuracy",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "ml_model_accuracy",
+            "legendFormat": "{{model_name}} v{{model_version}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Accuracy",
+            "min": 0,
+            "max": 1
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        }
+      },
+      {
+        "id": 3,
+        "title": "Training Duration",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "ml_training_duration_seconds",
+            "legendFormat": "{{model_name}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Duration (seconds)"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        }
+      },
+      {
+        "id": 4,
+        "title": "Event Processing Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(events_processed_total[5m])",
+            "legendFormat": "{{event_type}} - {{service}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Events/sec"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 16
+        }
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s"
+  }
+}

@@ -1,0 +1,114 @@
+/* Dashboard Grid Layout Styles */
+.dashboard-grid {
+  @apply w-full;
+}
+
+.widget-container {
+  @apply transition-all duration-200 ease-in-out;
+}
+
+.widget-container:hover {
+  @apply transform scale-[1.02];
+}
+
+/* React Grid Layout Styles (for future use) */
+.react-grid-layout {
+  position: relative;
+}
+
+.react-grid-item {
+  transition: all 200ms ease;
+  transition-property: left, top;
+}
+
+.react-grid-item.cssTransforms {
+  transition-property: transform;
+}
+
+.react-grid-item > .react-resizable-handle {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  bottom: 0;
+  right: 0;
+  background: url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNiIgaGVpZ2h0PSI2IiB2aWV3Qm94PSIwIDAgNiA2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxnIGZpbGw9IiM0QTVBNjgiIGZpbGwtcnVsZT0iZXZlbm9kZCI+PHBhdGggZD0ibTUgNWgtNHYtNGg0eiIvPjwvZz48L3N2Zz4=');
+  background-position: bottom right;
+  padding: 0 3px 3px 0;
+  background-repeat: no-repeat;
+  background-origin: content-box;
+  box-sizing: border-box;
+  cursor: se-resize;
+}
+
+.react-grid-item.react-grid-placeholder {
+  background: rgb(59 130 246 / 0.2);
+  opacity: 0.2;
+  transition-duration: 100ms;
+  z-index: 2;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  -o-user-select: none;
+  user-select: none;
+  border-radius: 0.5rem;
+}
+
+.react-grid-item > .react-resizable-handle::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 5px;
+  height: 5px;
+  border-right: 2px solid rgba(0, 0, 0, 0.4);
+  border-bottom: 2px solid rgba(0, 0, 0, 0.4);
+}
+
+/* Chart Styles */
+.line-chart svg,
+.bar-chart svg {
+  @apply w-full h-full;
+}
+
+.line-chart .line-path {
+  @apply drop-shadow-sm;
+}
+
+/* Widget Styles */
+.widget-container .bg-white {
+  @apply hover:shadow-lg transition-shadow duration-200;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .dashboard-grid {
+    @apply px-2;
+  }
+  
+  .widget-container {
+    @apply mb-4;
+  }
+}
+
+/* Accessibility improvements */
+.widget-container:focus-within {
+  @apply ring-2 ring-blue-500 ring-opacity-50;
+}
+
+/* Loading states */
+.widget-loading {
+  @apply animate-pulse;
+}
+
+.widget-loading .bg-white {
+  @apply bg-gray-100;
+}
+
+/* Error states */
+.widget-error {
+  @apply border-red-200 bg-red-50;
+}
+
+.widget-error .text-gray-900 {
+  @apply text-red-900;
+}

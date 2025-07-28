@@ -1,0 +1,293 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scaling-monitoring-dashboard
+  namespace: devflow
+data:
+  dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "DevFlow Kubernetes Scaling Monitoring",
+        "tags": ["devflow", "kubernetes", "scaling"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Pod Replicas by Service",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "kube_deployment_status_replicas{namespace=\"devflow\"}",
+                "legendFormat": "{{deployment}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "displayMode": "list",
+                  "orientation": "horizontal"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                }
+              }
+            },
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "id": 2,
+            "title": "HPA Target vs Current Replicas",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"devflow\"}",
+                "legendFormat": "Current - {{horizontalpodautoscaler}}"
+              },
+              {
+                "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"devflow\"}",
+                "legendFormat": "Desired - {{horizontalpodautoscaler}}"
+              },
+              {
+                "expr": "kube_horizontalpodautoscaler_spec_max_replicas{namespace=\"devflow\"}",
+                "legendFormat": "Max - {{horizontalpodautoscaler}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "vis": false
+                  },
+                  "lineInterpolation": "linear",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                }
+              }
+            },
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 0
+            }
+          },
+          {
+            "id": 3,
+            "title": "CPU Utilization by Pod",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "rate(container_cpu_usage_seconds_total{namespace=\"devflow\", container!=\"POD\", container!=\"\"}[5m]) * 100",
+                "legendFormat": "{{pod}} - {{container}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "CPU %",
+                  "axisPlacement": "auto",
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "showPoints": "never"
+                },
+                "unit": "percent"
+              }
+            },
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 8
+            }
+          },
+          {
+            "id": 4,
+            "title": "Memory Utilization by Pod",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "container_memory_usage_bytes{namespace=\"devflow\", container!=\"POD\", container!=\"\"} / container_spec_memory_limit_bytes{namespace=\"devflow\", container!=\"POD\", container!=\"\"} * 100",
+                "legendFormat": "{{pod}} - {{container}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "Memory %",
+                  "axisPlacement": "auto",
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "showPoints": "never"
+                },
+                "unit": "percent"
+              }
+            },
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 8
+            }
+          },
+          {
+            "id": 5,
+            "title": "HTTP Request Rate",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "sum(rate(http_requests_total{service=\"api-gateway\"}[5m])) by (service)",
+                "legendFormat": "{{service}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "Requests/sec",
+                  "axisPlacement": "auto",
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "showPoints": "never"
+                },
+                "unit": "reqps"
+              }
+            },
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 16
+            }
+          },
+          {
+            "id": 6,
+            "title": "HTTP Response Time P95",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service=\"api-gateway\"}[5m])) by (le, service))",
+                "legendFormat": "{{service}} P95"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "Response Time",
+                  "axisPlacement": "auto",
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "showPoints": "never"
+                },
+                "unit": "s"
+              }
+            },
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 16
+            }
+          },
+          {
+            "id": 7,
+            "title": "Scaling Events",
+            "type": "logs",
+            "targets": [
+              {
+                "expr": "{namespace=\"devflow\"} |= \"SuccessfulRescale\"",
+                "legendFormat": ""
+              }
+            ],
+            "gridPos": {
+              "h": 8,
+              "w": 24,
+              "x": 0,
+              "y": 24
+            }
+          }
+        ],
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "timepicker": {},
+        "timezone": "",
+        "title": "DevFlow Kubernetes Scaling Monitoring",
+        "uid": "devflow-scaling",
+        "version": 1
+      }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-dashboard-provisioner
+  namespace: devflow
+spec:
+  selector:
+    app: grafana
+  ports:
+  - port: 3000
+    targetPort: 3000
+  type: ClusterIP

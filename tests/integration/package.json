@@ -1,0 +1,56 @@
+{
+  "name": "@devflow/integration-tests",
+  "version": "1.0.0",
+  "description": "Comprehensive integration test suite for DevFlow Intelligence",
+  "private": true,
+  "scripts": {
+    "test": "jest --runInBand --detectOpenHandles",
+    "test:watch": "jest --watch --runInBand",
+    "test:coverage": "jest --coverage --runInBand",
+    "test:e2e": "jest --testPathPattern=e2e --runInBand",
+    "test:api": "jest --testPathPattern=api --runInBand",
+    "test:data": "jest --testPathPattern=data --runInBand",
+    "setup": "node scripts/setup-test-env.js",
+    "teardown": "node scripts/teardown-test-env.js"
+  },
+  "dependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "@types/supertest": "^2.0.12",
+    "axios": "^1.4.0",
+    "jest": "^29.5.0",
+    "kafkajs": "^2.2.0",
+    "mongodb": "^5.0.0",
+    "puppeteer": "^20.0.0",
+    "redis": "^4.6.0",
+    "supertest": "^6.3.0",
+    "testcontainers": "^9.0.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.0.0",
+    "ws": "^8.13.0"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "setupFilesAfterEnv": [
+      "<rootDir>/setup/jest.setup.ts"
+    ],
+    "testTimeout": 60000,
+    "maxWorkers": 1,
+    "testMatch": [
+      "**/__tests__/**/*.test.ts",
+      "**/?(*.)+(spec|test).ts"
+    ],
+    "collectCoverageFrom": [
+      "**/*.ts",
+      "!**/*.d.ts",
+      "!**/node_modules/**",
+      "!**/dist/**"
+    ]
+  },
+  "devDependencies": {
+    "@testcontainers/kafka": "^11.4.0",
+    "@testcontainers/mongodb": "^11.4.0",
+    "@testcontainers/redis": "^11.4.0"
+  }
+}

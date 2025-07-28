@@ -1,0 +1,77 @@
+{
+  "users": [
+    {
+      "_id": "user1",
+      "email": "test1@example.com",
+      "name": "Test User 1",
+      "role": "developer",
+      "teamIds": [
+        "team1"
+      ],
+      "privacySettings": {
+        "dataCollection": {
+          "ideTelemtry": true,
+          "gitActivity": true
+        },
+        "sharing": {
+          "teamMetrics": true
+        },
+        "retention": {
+          "months": 12
+        }
+      }
+    },
+    {
+      "_id": "user2",
+      "email": "test2@example.com",
+      "name": "Test User 2",
+      "role": "team_lead",
+      "teamIds": [
+        "team1"
+      ],
+      "privacySettings": {
+        "dataCollection": {
+          "ideTelemtry": true,
+          "gitActivity": true
+        },
+        "sharing": {
+          "teamMetrics": true
+        },
+        "retention": {
+          "months": 24
+        }
+      }
+    }
+  ],
+  "teams": [
+    {
+      "_id": "team1",
+      "name": "Test Team",
+      "memberIds": [
+        "user1",
+        "user2"
+      ],
+      "projectIds": [
+        "project1"
+      ],
+      "settings": {
+        "dashboardLayout": "default",
+        "alertThresholds": {
+          "productivity": 0.7
+        }
+      }
+    }
+  ],
+  "projects": [
+    {
+      "_id": "project1",
+      "name": "Test Project",
+      "repository": "https://github.com/test/repo",
+      "teamId": "team1",
+      "settings": {
+        "trackingEnabled": true,
+        "privacyLevel": "team"
+      }
+    }
+  ]
+}

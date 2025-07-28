@@ -1,0 +1,28 @@
+{
+  "mongodb": {
+    "url": "mongodb://testuser:testpass@localhost:27017/testdb?authSource=admin",
+    "database": "testdb"
+  },
+  "redis": {
+    "url": "redis://localhost:6379"
+  },
+  "kafka": {
+    "brokers": [
+      "localhost:9092"
+    ]
+  },
+  "influxdb": {
+    "url": "http://localhost:8086",
+    "token": "test-token",
+    "org": "test-org",
+    "bucket": "test-bucket"
+  },
+  "services": {
+    "apiGateway": "http://localhost:3001",
+    "dataIngestion": "http://localhost:3002",
+    "streamProcessing": "http://localhost:3003",
+    "mlPipeline": "http://localhost:3004",
+    "alertService": "http://localhost:3005",
+    "privacyService": "http://localhost:3006"
+  }
+}

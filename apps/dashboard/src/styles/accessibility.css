@@ -1,0 +1,302 @@
+/* Screen reader only content */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Skip links */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 6px;
+  background: #000;
+  color: #fff;
+  padding: 8px;
+  text-decoration: none;
+  z-index: 1000;
+  border-radius: 4px;
+}
+
+.skip-link:focus {
+  top: 6px;
+}
+
+/* High contrast mode */
+.high-contrast {
+  --bg-primary: #000000;
+  --bg-secondary: #1a1a1a;
+  --text-primary: #ffffff;
+  --text-secondary: #cccccc;
+  --border-color: #ffffff;
+  --focus-color: #ffff00;
+  --link-color: #00ffff;
+  --button-bg: #333333;
+  --button-text: #ffffff;
+  --error-color: #ff6b6b;
+  --success-color: #51cf66;
+  --warning-color: #ffd43b;
+}
+
+.high-contrast * {
+  background-color: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-color) !important;
+}
+
+.high-contrast .bg-white {
+  background-color: var(--bg-primary) !important;
+}
+
+.high-contrast .bg-gray-50,
+.high-contrast .bg-gray-100 {
+  background-color: var(--bg-secondary) !important;
+}
+
+.high-contrast .text-gray-600,
+.high-contrast .text-gray-700,
+.high-contrast .text-gray-800,
+.high-contrast .text-gray-900 {
+  color: var(--text-primary) !important;
+}
+
+.high-contrast .text-gray-500 {
+  color: var(--text-secondary) !important;
+}
+
+.high-contrast a {
+  color: var(--link-color) !important;
+}
+
+.high-contrast button {
+  background-color: var(--button-bg) !important;
+  color: var(--button-text) !important;
+  border: 2px solid var(--border-color) !important;
+}
+
+.high-contrast .bg-blue-600,
+.high-contrast .bg-blue-700 {
+  background-color: var(--button-bg) !important;
+}
+
+.high-contrast .text-red-600 {
+  color: var(--error-color) !important;
+}
+
+.high-contrast .text-green-600 {
+  color: var(--success-color) !important;
+}
+
+.high-contrast .text-yellow-600 {
+  color: var(--warning-color) !important;
+}
+
+/* Font size adjustments */
+.font-small {
+  font-size: 12px;
+}
+
+.font-medium {
+  font-size: 14px;
+}
+
+.font-large {
+  font-size: 16px;
+}
+
+.font-extra-large {
+  font-size: 18px;
+}
+
+.font-small .text-xs { font-size: 10px; }
+.font-small .text-sm { font-size: 11px; }
+.font-small .text-base { font-size: 12px; }
+.font-small .text-lg { font-size: 14px; }
+.font-small .text-xl { font-size: 16px; }
+.font-small .text-2xl { font-size: 18px; }
+
+.font-large .text-xs { font-size: 14px; }
+.font-large .text-sm { font-size: 15px; }
+.font-large .text-base { font-size: 16px; }
+.font-large .text-lg { font-size: 18px; }
+.font-large .text-xl { font-size: 20px; }
+.font-large .text-2xl { font-size: 24px; }
+
+.font-extra-large .text-xs { font-size: 16px; }
+.font-extra-large .text-sm { font-size: 17px; }
+.font-extra-large .text-base { font-size: 18px; }
+.font-extra-large .text-lg { font-size: 20px; }
+.font-extra-large .text-xl { font-size: 22px; }
+.font-extra-large .text-2xl { font-size: 26px; }
+
+/* Reduced motion */
+.reduced-motion *,
+.reduced-motion *::before,
+.reduced-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Focus indicators */
+*:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+.high-contrast *:focus {
+  outline: 3px solid var(--focus-color);
+  outline-offset: 2px;
+}
+
+/* Screen reader mode enhancements */
+.screen-reader-mode .chart-container::after {
+  content: attr(data-chart-description);
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+/* Keyboard navigation helpers */
+.keyboard-nav-visible {
+  outline: 2px solid #3b82f6 !important;
+  outline-offset: 2px !important;
+}
+
+/* Interactive element sizing for touch/click targets */
+button,
+a,
+input,
+select,
+textarea {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Ensure sufficient color contrast */
+.text-gray-400 {
+  color: #6b7280;
+}
+
+.high-contrast .text-gray-400 {
+  color: var(--text-secondary) !important;
+}
+
+/* Loading states for screen readers */
+.loading-announcement {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+/* Chart accessibility */
+.chart-table {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.screen-reader-mode .chart-table {
+  position: static;
+  left: auto;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  margin-top: 1rem;
+  border: 1px solid #d1d5db;
+  border-collapse: collapse;
+}
+
+.screen-reader-mode .chart-table th,
+.screen-reader-mode .chart-table td {
+  border: 1px solid #d1d5db;
+  padding: 0.5rem;
+  text-align: left;
+}
+
+/* Widget accessibility */
+.widget-container[aria-expanded="true"] {
+  z-index: 10;
+}
+
+.widget-container[aria-expanded="false"] {
+  z-index: 1;
+}
+
+/* Modal accessibility */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: 50;
+}
+
+.modal-content {
+  position: relative;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+/* Announcement region */
+.announcement-region {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+/* High contrast focus indicators for interactive elements */
+.high-contrast button:focus,
+.high-contrast a:focus,
+.high-contrast input:focus,
+.high-contrast select:focus,
+.high-contrast textarea:focus {
+  outline: 3px solid var(--focus-color) !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 1px var(--focus-color) !important;
+}
+
+/* Ensure text remains readable in high contrast */
+.high-contrast .shadow-md,
+.high-contrast .shadow-lg,
+.high-contrast .shadow-xl {
+  box-shadow: 0 0 0 1px var(--border-color) !important;
+}
+
+/* Loading spinner accessibility */
+.loading-spinner {
+  animation: spin 1s linear infinite;
+}
+
+.reduced-motion .loading-spinner {
+  animation: none;
+}
+
+.reduced-motion .loading-spinner::after {
+  content: "Loading...";
+  position: absolute;
+  left: -9999px;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

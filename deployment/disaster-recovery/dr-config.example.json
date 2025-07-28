@@ -1,0 +1,134 @@
+{
+  "disasterRecovery": {
+    "backup": {
+      "mongodb": {
+        "url": "mongodb://mongodb-primary.devflow-production.svc.cluster.local:27017",
+        "database": "devflow"
+      },
+      "influxdb": {
+        "url": "http://influxdb-primary.devflow-production.svc.cluster.local:8086",
+        "token": "${INFLUXDB_TOKEN}",
+        "org": "devflow",
+        "bucket": "metrics"
+      },
+      "redis": {
+        "url": "redis://redis-primary.devflow-production.svc.cluster.local:6379"
+      },
+      "storage": {
+        "type": "s3",
+        "config": {
+          "bucket": "devflow-disaster-recovery-backups",
+          "region": "us-east-1",
+          "accessKeyId": "${AWS_ACCESS_KEY_ID}",
+          "secretAccessKey": "${AWS_SECRET_ACCESS_KEY}"
+        }
+      },
+      "retention": {
+        "daily": 7,
+        "weekly": 4,
+        "monthly": 12
+      },
+      "encryption": {
+        "enabled": true,
+        "keyId": "${AWS_KMS_KEY_ID}"
+      }
+    },
+    "replication": {
+      "enabled": true,
+      "regions": ["us-east-1", "us-west-2", "eu-west-1"],
+      "syncInterval": 300000
+    },
+    "recovery": {
+      "rto": 30,
+      "rpo": 5,
+      "autoFailover": true,
+      "healthCheckInterval": 60000
+    },
+    "notifications": {
+      "webhookUrl": "${SLACK_WEBHOOK_URL}",
+      "emailRecipients": [
+        "devops@devflow.com",
+        "sre@devflow.com"
+      ],
+      "slackChannel": "#disaster-recovery-alerts"
+    }
+  },
+  "replication": {
+    "regions": [
+      {
+        "name": "us-east-1",
+        "primary": true,
+        "databases": {
+          "mongodb": {
+            "url": "mongodb://mongodb-us-east-1.devflow-production.svc.cluster.local:27017",
+            "database": "devflow"
+          },
+          "influxdb": {
+            "url": "http://influxdb-us-east-1.devflow-production.svc.cluster.local:8086",
+            "token": "${INFLUXDB_TOKEN_US_EAST_1}",
+            "org": "devflow",
+            "bucket": "metrics"
+          },
+          "redis": {
+            "url": "redis://redis-us-east-1.devflow-production.svc.cluster.local:6379"
+          }
+        },
+        "network": {
+          "latency": 10,
+          "bandwidth": 1000
+        }
+      },
+      {
+        "name": "us-west-2",
+        "primary": false,
+        "databases": {
+          "mongodb": {
+            "url": "mongodb://mongodb-us-west-2.devflow-production.svc.cluster.local:27017",
+            "database": "devflow"
+          },
+          "influxdb": {
+            "url": "http://influxdb-us-west-2.devflow-production.svc.cluster.local:8086",
+            "token": "${INFLUXDB_TOKEN_US_WEST_2}",
+            "org": "devflow",
+            "bucket": "metrics"
+          },
+          "redis": {
+            "url": "redis://redis-us-west-2.devflow-production.svc.cluster.local:6379"
+          }
+        },
+        "network": {
+          "latency": 50,
+          "bandwidth": 800
+        }
+      },
+      {
+        "name": "eu-west-1",
+        "primary": false,
+        "databases": {
+          "mongodb": {
+            "url": "mongodb://mongodb-eu-west-1.devflow-production.svc.cluster.local:27017",
+            "database": "devflow"
+          },
+          "influxdb": {
+            "url": "http://influxdb-eu-west-1.devflow-production.svc.cluster.local:8086",
+            "token": "${INFLUXDB_TOKEN_EU_WEST_1}",
+            "org": "devflow",
+            "bucket": "metrics"
+          },
+          "redis": {
+            "url": "redis://redis-eu-west-1.devflow-production.svc.cluster.local:6379"
+          }
+        },
+        "network": {
+          "latency": 100,
+          "bandwidth": 600
+        }
+      }
+    ],
+    "syncInterval": 30000,
+    "conflictResolution": "last-write-wins",
+    "healthCheckInterval": 60000,
+    "maxRetries": 3,
+    "retryDelay": 5000
+  }
+}

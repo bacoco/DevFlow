@@ -1,0 +1,141 @@
+{
+  "name": "devflow-intelligence",
+  "displayName": "DevFlow Intelligence",
+  "description": "AI-powered developer productivity insights and telemetry collection",
+  "version": "1.0.0",
+  "publisher": "devflow",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other",
+    "Data Science"
+  ],
+  "keywords": [
+    "productivity",
+    "analytics",
+    "telemetry",
+    "insights",
+    "ai"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "devflow.showDashboard",
+        "title": "Show Productivity Dashboard",
+        "category": "DevFlow"
+      },
+      {
+        "command": "devflow.configurePrivacy",
+        "title": "Configure Privacy Settings",
+        "category": "DevFlow"
+      },
+      {
+        "command": "devflow.toggleTelemetry",
+        "title": "Toggle Telemetry Collection",
+        "category": "DevFlow"
+      }
+    ],
+    "configuration": {
+      "title": "DevFlow Intelligence",
+      "properties": {
+        "devflow.telemetry.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable telemetry data collection"
+        },
+        "devflow.telemetry.privacyLevel": {
+          "type": "string",
+          "enum": ["private", "team", "public"],
+          "default": "team",
+          "description": "Privacy level for telemetry data"
+        },
+        "devflow.telemetry.endpoint": {
+          "type": "string",
+          "default": "http://localhost:3001/telemetry",
+          "description": "Telemetry ingestion endpoint"
+        },
+        "devflow.telemetry.batchSize": {
+          "type": "number",
+          "default": 50,
+          "description": "Number of events to batch before sending"
+        },
+        "devflow.telemetry.batchInterval": {
+          "type": "number",
+          "default": 30000,
+          "description": "Interval in milliseconds to send batches"
+        },
+        "devflow.privacy.collectKeystrokes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Collect keystroke telemetry"
+        },
+        "devflow.privacy.collectFileChanges": {
+          "type": "boolean",
+          "default": true,
+          "description": "Collect file change telemetry"
+        },
+        "devflow.privacy.collectDebugging": {
+          "type": "boolean",
+          "default": true,
+          "description": "Collect debugging session telemetry"
+        },
+        "devflow.privacy.collectFocusTime": {
+          "type": "boolean",
+          "default": true,
+          "description": "Collect focus time telemetry"
+        },
+        "devflow.privacy.collectBuildEvents": {
+          "type": "boolean",
+          "default": true,
+          "description": "Collect build event telemetry"
+        },
+        "devflow.privacy.collectTestEvents": {
+          "type": "boolean",
+          "default": true,
+          "description": "Collect test run telemetry"
+        }
+      }
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "devflow.showDashboard"
+        },
+        {
+          "command": "devflow.configurePrivacy"
+        },
+        {
+          "command": "devflow.toggleTelemetry"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.74.0",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.0.0",
+    "@vscode/test-electron": "^2.3.0",
+    "vsce": "^2.15.0"
+  },
+  "dependencies": {
+    "axios": "^1.5.0",
+    "uuid": "^9.0.0"
+  }
+}
