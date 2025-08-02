@@ -7,12 +7,22 @@ import {
   ModelMetrics,
   ModelValidationResult,
   TrainingJob,
-  ModelDeployment
+  ModelDeployment,
+  MLflowRun
 } from '../types/mlflow-types';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import path from 'path';
-// import * as tar from 'tar';
+import crypto from 'crypto';
+
+// Import tar for model packaging - handle when not available
+let tar: any;
+try {
+  tar = require('tar');
+} catch (error) {
+  console.warn('tar dependency not available - model packaging will use fallback implementation');
+  tar = null;
+}
 
 export interface ModelRegistryConfig extends MLflowConfig {
   validationThresholds: Record<string, number>;
@@ -21,14 +31,67 @@ export interface ModelRegistryConfig extends MLflowConfig {
   modelStoragePath: string;
 }
 
+export interface ModelPackage {
+  id: string;
+  modelName: string;
+  modelVersion: string;
+  packagePath: string;
+  packageSize: number;
+  checksum: string;
+  createdAt: Date;
+  metadata: ModelPackageMetadata;
+  status: 'created' | 'validated' | 'deployed' | 'archived';
+  deployments: string[]; // List of deployment IDs
+  tags: Record<string, string>;
+}
+
+export interface ModelPackageMetadata {
+  mlflowVersion: string;
+  pythonVersion?: string;
+  dependencies: string[];
+  modelFramework: string;
+  modelType: string;
+  inputSchema?: any;
+  outputSchema?: any;
+  signature?: any;
+  modelSize: number;
+  artifactCount: number;
+  compressionRatio: number;
+  buildInfo: {
+    buildTime: Date;
+    buildHost: string;
+    gitCommit?: string;
+    buildNumber?: string;
+  };
+}
+
+export interface ModelArtifactStorage {
+  storePackage(packageInfo: ModelPackage): Promise<string>;
+  retrievePackage(packageId: string): Promise<Buffer>;
+  deletePackage(packageId: string): Promise<void>;
+  listPackages(modelName?: string): Promise<ModelPackage[]>;
+}
+
+export interface ModelDeploymentPipeline {
+  deployPackage(packageId: string, environment: string, config?: any): Promise<string>;
+  undeployPackage(deploymentId: string): Promise<void>;
+  getDeploymentStatus(deploymentId: string): Promise<ModelDeployment>;
+  listDeployments(environment?: string): Promise<ModelDeployment[]>;
+}
+
 export class ModelRegistry {
   private mlflowClient: MLflowClient;
   private config: ModelRegistryConfig;
   private deployments: Map<string, ModelDeployment> = new Map();
+  private packages: Map<string, ModelPackage> = new Map();
+  private artifactStorage: ModelArtifactStorage;
+  private deploymentPipeline: ModelDeploymentPipeline;
 
   constructor(config: ModelRegistryConfig) {
     this.config = config;
     this.mlflowClient = new MLflowClient(config);
+    this.artifactStorage = new FileSystemArtifactStorage(config.modelStoragePath);
+    this.deploymentPipeline = new KubernetesDeploymentPipeline(config);
   }
 
   // ============================================================================
@@ -407,41 +470,514 @@ export class ModelRegistry {
     }
   }
 
-  async packageModel(modelName: string, modelVersion: string, outputPath: string): Promise<string> {
+  async packageModel(modelName: string, modelVersion: string, outputPath?: string): Promise<ModelPackage> {
     try {
-      const tempDir = path.join(this.config.modelStoragePath, 'temp', `${modelName}-${modelVersion}`);
+      const version = await this.mlflowClient.getModelVersion(modelName, modelVersion);
+      const run = await this.mlflowClient.getRun(version.run_id);
       
+      const packageId = uuidv4();
+      const tempDir = path.join(this.config.modelStoragePath, 'temp', packageId);
+      const finalOutputPath = outputPath || path.join(this.config.modelStoragePath, 'packages');
+      
+      // Ensure directories exist
+      fs.mkdirSync(tempDir, { recursive: true });
+      fs.mkdirSync(finalOutputPath, { recursive: true });
+
       // Download artifacts to temp directory
       await this.downloadModelArtifacts(modelName, modelVersion, tempDir);
 
-      // Create tar.gz package (simplified for now)
-      const packagePath = path.join(outputPath, `${modelName}-${modelVersion}.tar.gz`);
+      // Create model metadata
+      const metadata = await this.createModelMetadata(version, run);
+      const metadataPath = path.join(tempDir, 'model-metadata.json');
+      fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+
+      // Create MLmodel file for MLflow compatibility
+      const mlmodelContent = this.createMLModelFile(version, metadata);
+      const mlmodelPath = path.join(tempDir, 'MLmodel');
+      fs.writeFileSync(mlmodelPath, mlmodelContent);
+
+      // Create requirements.txt if dependencies exist
+      if (metadata.dependencies.length > 0) {
+        const requirementsPath = path.join(tempDir, 'requirements.txt');
+        fs.writeFileSync(requirementsPath, metadata.dependencies.join('\n'));
+      }
+
+      // Create tar.gz package
+      const packageFileName = `${modelName}-${modelVersion}-${packageId}.tar.gz`;
+      const packagePath = path.join(finalOutputPath, packageFileName);
       
-      // TODO: Implement tar.gz packaging when tar dependency is available
-      // await tar.create(
-      //   {
-      //     gzip: true,
-      //     file: packagePath,
-      //     cwd: path.dirname(tempDir)
-      //   },
-      //   [path.basename(tempDir)]
-      // );
+      if (tar) {
+        await tar.create(
+          {
+            gzip: true,
+            file: packagePath,
+            cwd: path.dirname(tempDir)
+          },
+          [path.basename(tempDir)]
+        );
+      } else {
+        // Fallback implementation when tar is not available
+        await this.createFallbackPackage(tempDir, packagePath);
+      }
+
+      // Calculate package size and checksum
+      const stats = fs.statSync(packagePath);
+      const checksum = await this.calculateChecksum(packagePath);
+
+      // Calculate compression ratio
+      const uncompressedSize = this.calculateDirectorySize(tempDir);
+      const compressionRatio = stats.size / uncompressedSize;
+
+      // Add build info to metadata
+      metadata.buildInfo = {
+        buildTime: new Date(),
+        buildHost: require('os').hostname(),
+        gitCommit: process.env.GIT_COMMIT,
+        buildNumber: process.env.BUILD_NUMBER
+      };
+      metadata.compressionRatio = compressionRatio;
+
+      // Create package info
+      const packageInfo: ModelPackage = {
+        id: packageId,
+        modelName,
+        modelVersion,
+        packagePath,
+        packageSize: stats.size,
+        checksum,
+        createdAt: new Date(),
+        metadata,
+        status: 'created',
+        deployments: [],
+        tags: {
+          'package.type': 'ml-model',
+          'package.format': 'tar.gz',
+          'mlflow.run_id': version.run_id,
+          'mlflow.stage': version.current_stage
+        }
+      };
+
+      // Store package info
+      this.packages.set(packageId, packageInfo);
       
-      // For now, just create an empty file as placeholder
-      fs.writeFileSync(packagePath, 'placeholder');
+      // Store in artifact storage
+      await this.artifactStorage.storePackage(packageInfo);
 
       // Clean up temp directory
       fs.rmSync(tempDir, { recursive: true, force: true });
 
-      return packagePath;
+      // Log packaging event
+      await this.mlflowClient.setTag(version.run_id, 'package.id', packageId);
+      await this.mlflowClient.setTag(version.run_id, 'package.path', packagePath);
+      await this.mlflowClient.setTag(version.run_id, 'package.checksum', checksum);
+
+      return packageInfo;
     } catch (error) {
+      console.error('Packaging error:', error);
       throw new Error(`Failed to package model: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async unpackageModel(packageId: string, outputPath: string): Promise<void> {
+    try {
+      const packageInfo = this.packages.get(packageId);
+      if (!packageInfo) {
+        throw new Error(`Package ${packageId} not found`);
+      }
+
+      // Retrieve package from storage
+      const packageData = await this.artifactStorage.retrievePackage(packageId);
+      
+      // Write package to temp file
+      const tempPackagePath = path.join(this.config.modelStoragePath, 'temp', `${packageId}.tar.gz`);
+      fs.mkdirSync(path.dirname(tempPackagePath), { recursive: true });
+      fs.writeFileSync(tempPackagePath, packageData);
+
+      // Verify checksum
+      const actualChecksum = await this.calculateChecksum(tempPackagePath);
+      if (actualChecksum !== packageInfo.checksum) {
+        throw new Error(`Package checksum mismatch. Expected: ${packageInfo.checksum}, Actual: ${actualChecksum}`);
+      }
+
+      // Extract package
+      fs.mkdirSync(outputPath, { recursive: true });
+      
+      if (tar) {
+        await tar.extract({
+          file: tempPackagePath,
+          cwd: outputPath
+        });
+      } else {
+        // Fallback implementation when tar is not available
+        await this.extractFallbackPackage(tempPackagePath, outputPath);
+      }
+
+      // Clean up temp file
+      fs.unlinkSync(tempPackagePath);
+
+    } catch (error) {
+      throw new Error(`Failed to unpackage model: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async listPackages(modelName?: string): Promise<ModelPackage[]> {
+    const packages = Array.from(this.packages.values());
+    
+    if (modelName) {
+      return packages.filter(pkg => pkg.modelName === modelName);
+    }
+    
+    return packages;
+  }
+
+  async getPackage(packageId: string): Promise<ModelPackage | undefined> {
+    return this.packages.get(packageId);
+  }
+
+  async deletePackage(packageId: string): Promise<void> {
+    try {
+      const packageInfo = this.packages.get(packageId);
+      if (!packageInfo) {
+        throw new Error(`Package ${packageId} not found`);
+      }
+
+      // Check if package has active deployments
+      if (packageInfo.deployments.length > 0) {
+        throw new Error(`Cannot delete package ${packageId}: has active deployments`);
+      }
+
+      // Delete from artifact storage
+      await this.artifactStorage.deletePackage(packageId);
+
+      // Delete local file if it exists
+      if (fs.existsSync(packageInfo.packagePath)) {
+        fs.unlinkSync(packageInfo.packagePath);
+      }
+
+      // Remove from memory
+      this.packages.delete(packageId);
+
+    } catch (error) {
+      throw new Error(`Failed to delete package: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async validatePackage(packageId: string): Promise<{ valid: boolean; errors: string[] }> {
+    try {
+      const packageInfo = this.packages.get(packageId);
+      if (!packageInfo) {
+        return { valid: false, errors: ['Package not found'] };
+      }
+
+      const errors: string[] = [];
+
+      // Check if package file exists
+      if (!fs.existsSync(packageInfo.packagePath)) {
+        errors.push('Package file not found');
+      } else {
+        // Verify checksum
+        const actualChecksum = await this.calculateChecksum(packageInfo.packagePath);
+        if (actualChecksum !== packageInfo.checksum) {
+          errors.push('Package checksum mismatch');
+        }
+
+        // Verify file size
+        const stats = fs.statSync(packageInfo.packagePath);
+        if (stats.size !== packageInfo.packageSize) {
+          errors.push('Package size mismatch');
+        }
+      }
+
+      // Validate metadata
+      if (!packageInfo.metadata.modelFramework) {
+        errors.push('Missing model framework information');
+      }
+
+      if (packageInfo.metadata.dependencies.length === 0) {
+        errors.push('No dependencies specified');
+      }
+
+      // Update package status
+      if (errors.length === 0) {
+        packageInfo.status = 'validated';
+      }
+
+      return { valid: errors.length === 0, errors };
+    } catch (error) {
+      return { 
+        valid: false, 
+        errors: [`Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`] 
+      };
+    }
+  }
+
+  async addPackageTag(packageId: string, key: string, value: string): Promise<void> {
+    const packageInfo = this.packages.get(packageId);
+    if (!packageInfo) {
+      throw new Error(`Package ${packageId} not found`);
+    }
+
+    packageInfo.tags[key] = value;
+    await this.artifactStorage.storePackage(packageInfo);
+  }
+
+  async removePackageTag(packageId: string, key: string): Promise<void> {
+    const packageInfo = this.packages.get(packageId);
+    if (!packageInfo) {
+      throw new Error(`Package ${packageId} not found`);
+    }
+
+    delete packageInfo.tags[key];
+    await this.artifactStorage.storePackage(packageInfo);
+  }
+
+  async getPackagesByTag(key: string, value?: string): Promise<ModelPackage[]> {
+    const packages = Array.from(this.packages.values());
+    
+    return packages.filter(pkg => {
+      if (value) {
+        return pkg.tags[key] === value;
+      } else {
+        return key in pkg.tags;
+      }
+    });
+  }
+
+  // ============================================================================
+  // MODEL DEPLOYMENT PIPELINE
+  // ============================================================================
+
+  async deployPackage(packageId: string, environment: string, config?: any): Promise<string> {
+    try {
+      const packageInfo = this.packages.get(packageId);
+      if (!packageInfo) {
+        throw new Error(`Package ${packageId} not found`);
+      }
+
+      // Validate package before deployment
+      const validation = await this.validatePackage(packageId);
+      if (!validation.valid) {
+        throw new Error(`Package validation failed: ${validation.errors.join(', ')}`);
+      }
+
+      const deploymentId = await this.deploymentPipeline.deployPackage(packageId, environment, config);
+      
+      // Track deployment in package
+      packageInfo.deployments.push(deploymentId);
+      packageInfo.status = 'deployed';
+      await this.artifactStorage.storePackage(packageInfo);
+
+      return deploymentId;
+    } catch (error) {
+      throw new Error(`Failed to deploy package: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async undeployPackage(deploymentId: string): Promise<void> {
+    try {
+      await this.deploymentPipeline.undeployPackage(deploymentId);
+      
+      // Remove deployment from package tracking
+      for (const packageInfo of this.packages.values()) {
+        const index = packageInfo.deployments.indexOf(deploymentId);
+        if (index > -1) {
+          packageInfo.deployments.splice(index, 1);
+          if (packageInfo.deployments.length === 0) {
+            packageInfo.status = 'validated';
+          }
+          await this.artifactStorage.storePackage(packageInfo);
+          break;
+        }
+      }
+    } catch (error) {
+      throw new Error(`Failed to undeploy package: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async getPackageDeploymentStatus(deploymentId: string): Promise<ModelDeployment> {
+    try {
+      return await this.deploymentPipeline.getDeploymentStatus(deploymentId);
+    } catch (error) {
+      throw new Error(`Failed to get deployment status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async listPackageDeployments(environment?: string): Promise<ModelDeployment[]> {
+    try {
+      return await this.deploymentPipeline.listDeployments(environment);
+    } catch (error) {
+      throw new Error(`Failed to list deployments: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   // ============================================================================
   // UTILITY METHODS
   // ============================================================================
+
+  private async createModelMetadata(version: ModelVersion, run: MLflowRun): Promise<ModelPackageMetadata> {
+    // Extract dependencies from run tags or parameters
+    const dependencies = this.extractDependencies(run);
+    
+    // Determine model framework from tags or artifacts
+    const modelFramework = run.data.tags['mlflow.model.framework'] || 'unknown';
+    const modelType = run.data.tags['mlflow.model.type'] || 'unknown';
+    
+    // Get artifact information
+    const artifacts = await this.mlflowClient.listArtifacts(version.run_id);
+    const modelSize = artifacts.reduce((total, artifact) => total + (artifact.file_size || 0), 0);
+    
+    return {
+      mlflowVersion: run.data.tags['mlflow.version'] || '2.0.0',
+      pythonVersion: run.data.tags['mlflow.python.version'],
+      dependencies,
+      modelFramework,
+      modelType,
+      inputSchema: run.data.tags['mlflow.model.input_schema'] ? 
+        JSON.parse(run.data.tags['mlflow.model.input_schema']) : undefined,
+      outputSchema: run.data.tags['mlflow.model.output_schema'] ? 
+        JSON.parse(run.data.tags['mlflow.model.output_schema']) : undefined,
+      signature: run.data.tags['mlflow.model.signature'] ? 
+        JSON.parse(run.data.tags['mlflow.model.signature']) : undefined,
+      modelSize,
+      artifactCount: artifacts.length,
+      compressionRatio: 0, // Will be calculated later
+      buildInfo: {
+        buildTime: new Date(),
+        buildHost: '',
+        gitCommit: run.data.tags['mlflow.source.git.commit'],
+        buildNumber: run.data.tags['mlflow.source.build.number']
+      }
+    };
+  }
+
+  private extractDependencies(run: MLflowRun): string[] {
+    const dependencies: string[] = [];
+    
+    // Extract from tags
+    if (run.data.tags['mlflow.model.dependencies']) {
+      dependencies.push(...run.data.tags['mlflow.model.dependencies'].split(','));
+    }
+    
+    // Extract from parameters
+    Object.entries(run.data.params).forEach(([key, value]) => {
+      if (key.startsWith('dependency_') && typeof value === 'string') {
+        dependencies.push(value);
+      }
+    });
+    
+    return dependencies.filter(dep => dep.trim().length > 0);
+  }
+
+  private createMLModelFile(version: ModelVersion, metadata: ModelPackageMetadata): string {
+    const mlmodelContent = {
+      artifact_path: 'model',
+      flavors: {
+        [metadata.modelFramework]: {
+          model_path: 'model.pkl', // This should be dynamic based on the actual model file
+          python_version: metadata.pythonVersion || '3.8.0'
+        }
+      },
+      model_uuid: version.run_id,
+      mlflow_version: metadata.mlflowVersion,
+      signature: metadata.signature,
+      utc_time_created: new Date(version.creation_timestamp).toISOString()
+    };
+
+    return Object.entries(mlmodelContent)
+      .map(([key, value]) => `${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}`)
+      .join('\n');
+  }
+
+  private async calculateChecksum(filePath: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const hash = crypto.createHash('sha256');
+      const stream = fs.createReadStream(filePath);
+      
+      stream.on('data', data => hash.update(data));
+      stream.on('end', () => resolve(hash.digest('hex')));
+      stream.on('error', reject);
+    });
+  }
+
+  private calculateDirectorySize(dirPath: string): number {
+    let totalSize = 0;
+    
+    const calculateSize = (currentPath: string) => {
+      const stats = fs.statSync(currentPath);
+      
+      if (stats.isDirectory()) {
+        const files = fs.readdirSync(currentPath);
+        for (const file of files) {
+          calculateSize(path.join(currentPath, file));
+        }
+      } else {
+        totalSize += stats.size;
+      }
+    };
+    
+    calculateSize(dirPath);
+    return totalSize;
+  }
+
+  private async createFallbackPackage(sourceDir: string, packagePath: string): Promise<void> {
+    // Simple fallback: create a JSON manifest with base64-encoded files
+    const manifest: any = {
+      type: 'devflow-model-package',
+      version: '1.0',
+      files: {}
+    };
+
+    const addFilesToManifest = (dir: string, relativePath = '') => {
+      const items = fs.readdirSync(dir);
+      
+      for (const item of items) {
+        const fullPath = path.join(dir, item);
+        const itemRelativePath = path.join(relativePath, item);
+        const stats = fs.statSync(fullPath);
+        
+        if (stats.isDirectory()) {
+          addFilesToManifest(fullPath, itemRelativePath);
+        } else {
+          const content = fs.readFileSync(fullPath);
+          manifest.files[itemRelativePath] = {
+            content: content.toString('base64'),
+            size: stats.size,
+            isDirectory: false
+          };
+        }
+      }
+    };
+
+    addFilesToManifest(sourceDir);
+    
+    // Write manifest as JSON
+    fs.writeFileSync(packagePath, JSON.stringify(manifest, null, 2));
+  }
+
+  private async extractFallbackPackage(packagePath: string, outputDir: string): Promise<void> {
+    // Read and parse the JSON manifest
+    const manifestContent = fs.readFileSync(packagePath, 'utf8');
+    const manifest = JSON.parse(manifestContent);
+    
+    if (manifest.type !== 'devflow-model-package') {
+      throw new Error('Invalid package format');
+    }
+
+    // Extract files from manifest
+    for (const [filePath, fileInfo] of Object.entries(manifest.files as any)) {
+      const fullOutputPath = path.join(outputDir, filePath);
+      const dir = path.dirname(fullOutputPath);
+      
+      // Create directory if needed
+      fs.mkdirSync(dir, { recursive: true });
+      
+      // Write file content
+      const content = Buffer.from((fileInfo as any).content, 'base64');
+      fs.writeFileSync(fullOutputPath, content);
+    }
+  }
+
+
 
   private async simulateDeployment(deployment: ModelDeployment, config?: Record<string, any>): Promise<void> {
     // Simulate deployment time
@@ -496,5 +1032,161 @@ export class ModelRegistry {
     }
 
     return comparison;
+  }
+}
+
+// ============================================================================
+// ARTIFACT STORAGE IMPLEMENTATIONS
+// ============================================================================
+
+export class FileSystemArtifactStorage implements ModelArtifactStorage {
+  private storagePath: string;
+
+  constructor(storagePath: string) {
+    this.storagePath = storagePath;
+    fs.mkdirSync(path.join(storagePath, 'packages'), { recursive: true });
+  }
+
+  async storePackage(packageInfo: ModelPackage): Promise<string> {
+    const metadataPath = path.join(this.storagePath, 'packages', `${packageInfo.id}.json`);
+    fs.writeFileSync(metadataPath, JSON.stringify(packageInfo, null, 2));
+    return packageInfo.id;
+  }
+
+  async retrievePackage(packageId: string): Promise<Buffer> {
+    const metadataPath = path.join(this.storagePath, 'packages', `${packageId}.json`);
+    
+    if (!fs.existsSync(metadataPath)) {
+      throw new Error(`Package metadata not found: ${packageId}`);
+    }
+
+    const packageInfo: ModelPackage = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+    
+    if (!fs.existsSync(packageInfo.packagePath)) {
+      throw new Error(`Package file not found: ${packageInfo.packagePath}`);
+    }
+
+    return fs.readFileSync(packageInfo.packagePath);
+  }
+
+  async deletePackage(packageId: string): Promise<void> {
+    const metadataPath = path.join(this.storagePath, 'packages', `${packageId}.json`);
+    
+    if (fs.existsSync(metadataPath)) {
+      const packageInfo: ModelPackage = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+      
+      // Delete package file
+      if (fs.existsSync(packageInfo.packagePath)) {
+        fs.unlinkSync(packageInfo.packagePath);
+      }
+      
+      // Delete metadata
+      fs.unlinkSync(metadataPath);
+    }
+  }
+
+  async listPackages(modelName?: string): Promise<ModelPackage[]> {
+    const packagesDir = path.join(this.storagePath, 'packages');
+    const files = fs.readdirSync(packagesDir).filter(f => f.endsWith('.json'));
+    
+    const packages: ModelPackage[] = [];
+    
+    for (const file of files) {
+      try {
+        const packageInfo: ModelPackage = JSON.parse(
+          fs.readFileSync(path.join(packagesDir, file), 'utf8')
+        );
+        
+        if (!modelName || packageInfo.modelName === modelName) {
+          packages.push(packageInfo);
+        }
+      } catch (error) {
+        console.warn(`Failed to parse package metadata: ${file}`, error);
+      }
+    }
+    
+    return packages;
+  }
+}
+
+// ============================================================================
+// DEPLOYMENT PIPELINE IMPLEMENTATIONS
+// ============================================================================
+
+export class KubernetesDeploymentPipeline implements ModelDeploymentPipeline {
+  private config: ModelRegistryConfig;
+  private deployments: Map<string, ModelDeployment> = new Map();
+
+  constructor(config: ModelRegistryConfig) {
+    this.config = config;
+  }
+
+  async deployPackage(packageId: string, environment: string, config?: any): Promise<string> {
+    const deploymentId = uuidv4();
+    
+    // In a real implementation, this would:
+    // 1. Create Kubernetes deployment manifest
+    // 2. Apply the manifest to the cluster
+    // 3. Wait for deployment to be ready
+    // 4. Create service and ingress
+    // 5. Configure monitoring and logging
+    
+    const deployment: ModelDeployment = {
+      id: deploymentId,
+      modelName: `package-${packageId}`,
+      modelVersion: 'latest',
+      stage: 'Production',
+      deploymentTime: new Date(),
+      status: 'deploying',
+      endpoint: `http://ml-${environment}.devflow.local/models/${packageId}`
+    };
+
+    this.deployments.set(deploymentId, deployment);
+
+    // Simulate deployment process
+    setTimeout(() => {
+      deployment.status = 'active';
+      deployment.healthCheck = {
+        lastCheck: new Date(),
+        status: 'healthy',
+        latency: 45,
+        errorRate: 0
+      };
+    }, 3000);
+
+    return deploymentId;
+  }
+
+  async undeployPackage(deploymentId: string): Promise<void> {
+    const deployment = this.deployments.get(deploymentId);
+    if (!deployment) {
+      throw new Error(`Deployment ${deploymentId} not found`);
+    }
+
+    // In a real implementation, this would:
+    // 1. Delete Kubernetes deployment
+    // 2. Delete service and ingress
+    // 3. Clean up monitoring resources
+    
+    deployment.status = 'inactive';
+    deployment.healthCheck = undefined;
+  }
+
+  async getDeploymentStatus(deploymentId: string): Promise<ModelDeployment> {
+    const deployment = this.deployments.get(deploymentId);
+    if (!deployment) {
+      throw new Error(`Deployment ${deploymentId} not found`);
+    }
+    return deployment;
+  }
+
+  async listDeployments(environment?: string): Promise<ModelDeployment[]> {
+    const deployments = Array.from(this.deployments.values());
+    
+    if (environment) {
+      return deployments.filter(d => d.endpoint?.includes(environment));
+    }
+    
+    return deployments;
   }
 }

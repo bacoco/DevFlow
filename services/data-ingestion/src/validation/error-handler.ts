@@ -1,5 +1,8 @@
 import winston from 'winston';
 import { kafkaProducer } from '../kafka';
+import { RetryStorage } from './retry-storage';
+import { errorMetricsCollector } from './error-metrics';
+import { alertingSystem } from './alerting-system';
 
 export interface RetryConfig {
   maxRetries: number;
@@ -24,6 +27,7 @@ export interface RetryableError extends Error {
 export class ErrorHandler {
   private logger: winston.Logger;
   private defaultRetryConfig: RetryConfig;
+  private retryStorage: RetryStorage;
 
   constructor() {
     this.logger = winston.createLogger({
@@ -46,6 +50,34 @@ export class ErrorHandler {
       backoffMultiplier: parseFloat(process.env.BACKOFF_MULTIPLIER || '2.0'),
       jitterMs: parseInt(process.env.RETRY_JITTER_MS || '100')
     };
+
+    // Initialize retry storage
+    this.retryStorage = new RetryStorage({
+      host: process.env.REDIS_HOST || 'localhost',
+      port: parseInt(process.env.REDIS_PORT || '6379'),
+      password: process.env.REDIS_PASSWORD,
+      db: parseInt(process.env.REDIS_RETRY_DB || '1')
+    });
+
+    this.initializeRetryStorage();
+  }
+
+  private async initializeRetryStorage(): Promise<void> {
+    try {
+      await this.retryStorage.connect();
+      this.logger.info('Retry storage initialized successfully');
+    } catch (error) {
+      this.logger.error('Failed to initialize retry storage:', error);
+      
+      // Record initialization error in metrics
+      errorMetricsCollector.recordError(
+        'initialization_error',
+        'retry_storage_init',
+        'error_handler',
+        'data-ingestion',
+        'critical'
+      );
+    }
   }
 
   async executeWithRetry<T>(
@@ -68,6 +100,14 @@ export class ErrorHandler {
             attempt,
             totalAttempts: attempt + 1
           });
+
+          // Record successful retry in metrics
+          errorMetricsCollector.recordRetrySuccess(
+            context.operation,
+            context.source,
+            attempt,
+            Date.now() - (context.metadata?.startTime || Date.now())
+          );
         }
         
         return result;
@@ -89,6 +129,22 @@ export class ErrorHandler {
           metadata: context.metadata
         });
 
+        // Record retry attempt in metrics
+        errorMetricsCollector.recordRetryAttempt(
+          context.operation,
+          context.source,
+          attempt
+        );
+
+        // Record error in metrics
+        errorMetricsCollector.recordError(
+          this.categorizeError(error as Error),
+          context.operation,
+          context.source,
+          'data-ingestion',
+          this.getErrorSeverity(error as Error, attempt, config.maxRetries)
+        );
+
         if (!shouldRetry) {
           break;
         }
@@ -100,6 +156,14 @@ export class ErrorHandler {
 
     // All retries exhausted, handle final failure
     await this.handleFinalFailure(lastError!, context, attempt);
+    
+    // Record final retry failure
+    errorMetricsCollector.recordRetryFailure(
+      context.operation,
+      context.source,
+      this.categorizeError(lastError!)
+    );
+    
     throw lastError!;
   }
 
@@ -124,8 +188,20 @@ export class ErrorHandler {
       context
     );
 
-    // Update metrics (if metrics service is available)
-    this.updateErrorMetrics('validation_error', context);
+    // Record validation error in metrics
+    errorMetricsCollector.recordValidationError(
+      context.source,
+      errors[0] || 'unknown_validation_rule'
+    );
+
+    // Record general error
+    errorMetricsCollector.recordError(
+      'validation_error',
+      context.operation,
+      context.source,
+      'data-ingestion',
+      'medium'
+    );
   }
 
   async handleProcessingError(
@@ -157,8 +233,14 @@ export class ErrorHandler {
       );
     }
 
-    // Update metrics
-    this.updateErrorMetrics('processing_error', context);
+    // Record processing error in metrics
+    errorMetricsCollector.recordError(
+      'processing_error',
+      context.operation,
+      context.source,
+      'data-ingestion',
+      this.getErrorSeverity(error, retryCount, this.defaultRetryConfig.maxRetries)
+    );
   }
 
   async handleKafkaError(
@@ -189,8 +271,20 @@ export class ErrorHandler {
     // Store message for retry when Kafka is available
     await this.storeForRetry(topic, message, error, context);
 
-    // Update metrics
-    this.updateErrorMetrics('kafka_error', context);
+    // Record Kafka error in metrics
+    errorMetricsCollector.recordKafkaError(
+      topic,
+      this.categorizeKafkaError(error)
+    );
+
+    // Record general error
+    errorMetricsCollector.recordError(
+      'kafka_error',
+      context.operation,
+      context.source,
+      'data-ingestion',
+      isConnectionError ? 'high' : 'medium'
+    );
   }
 
   private isErrorRetryable(error: Error): boolean {
@@ -280,21 +374,34 @@ export class ErrorHandler {
     error: Error,
     context: ErrorContext
   ): Promise<void> {
-    // In a production system, you might store this in Redis or a database
-    // For now, we'll just log it
-    this.logger.info('Message stored for retry', {
-      topic,
-      messageId: message.id,
-      operation: context.operation,
-      source: context.source,
-      error: error.message
-    });
+    try {
+      const jobId = await this.retryStorage.storeForRetry(
+        `kafka_publish_${topic}`,
+        { topic, message },
+        error,
+        context,
+        {
+          initialDelayMs: this.defaultRetryConfig.initialDelayMs,
+          maxDelayMs: this.defaultRetryConfig.maxDelayMs,
+          backoffMultiplier: this.defaultRetryConfig.backoffMultiplier,
+          jitterMs: this.defaultRetryConfig.jitterMs || 100
+        },
+        this.defaultRetryConfig.maxRetries
+      );
 
-    // TODO: Implement actual retry storage mechanism
-    // This could be:
-    // 1. Redis with TTL for temporary storage
-    // 2. Database table for persistent retry queue
-    // 3. File-based storage for simple cases
+      this.logger.info('Message stored for retry', {
+        jobId,
+        topic,
+        messageId: message.id,
+        operation: context.operation,
+        source: context.source,
+        error: error.message
+      });
+    } catch (storageError) {
+      this.logger.error('Failed to store message for retry:', storageError);
+      // Fallback: still log the original error
+      this.logger.error('Original error that failed to be stored:', error);
+    }
   }
 
   private async handleFinalFailure(
@@ -335,8 +442,6 @@ export class ErrorHandler {
     context: ErrorContext,
     totalAttempts: number
   ): Promise<void> {
-    // In a production system, this would integrate with alerting systems
-    // like PagerDuty, Slack, or email notifications
     this.logger.error('CRITICAL ALERT: Operation failed completely', {
       operation: context.operation,
       source: context.source,
@@ -345,23 +450,14 @@ export class ErrorHandler {
       timestamp: context.timestamp
     });
 
-    // TODO: Implement actual alerting mechanism
-  }
-
-  private updateErrorMetrics(errorType: string, context: ErrorContext): void {
-    // In a production system, this would update metrics in Prometheus or similar
-    this.logger.debug('Error metrics updated', {
-      errorType,
-      operation: context.operation,
-      source: context.source,
-      timestamp: context.timestamp
-    });
-
-    // TODO: Implement actual metrics collection
-    // This could be:
-    // 1. Prometheus metrics
-    // 2. StatsD metrics
-    // 3. Custom metrics service
+    // Record critical error in metrics with highest severity
+    errorMetricsCollector.recordError(
+      'critical_failure',
+      context.operation,
+      context.source,
+      'data-ingestion',
+      'critical'
+    );
   }
 
   // Public method to create retryable errors
@@ -381,6 +477,230 @@ export class ErrorHandler {
   updateRetryConfig(config: Partial<RetryConfig>): void {
     this.defaultRetryConfig = { ...this.defaultRetryConfig, ...config };
     this.logger.info('Retry configuration updated', { config: this.defaultRetryConfig });
+  }
+
+  // Process retry jobs from storage
+  async processRetryJobs(batchSize: number = 10): Promise<number> {
+    try {
+      const jobs = await this.retryStorage.getJobsReadyForRetry(batchSize);
+      let processedCount = 0;
+
+      for (const job of jobs) {
+        // Acquire lock to prevent concurrent processing
+        const lockAcquired = await this.retryStorage.acquireJobLock(job.id);
+        if (!lockAcquired) {
+          this.logger.debug('Failed to acquire lock for job', { jobId: job.id });
+          continue;
+        }
+
+        try {
+          await this.retryStorage.markJobAsProcessing(job.id);
+          
+          // Process the job based on its operation type
+          const success = await this.executeRetryJob(job);
+          
+          if (success) {
+            await this.retryStorage.markJobAsSuccessful(job.id);
+            this.logger.info('Retry job completed successfully', {
+              jobId: job.id,
+              operation: job.operation,
+              attempts: job.attempts + 1
+            });
+          } else {
+            await this.retryStorage.rescheduleJob(job.id, new Error('Retry job failed'));
+          }
+          
+          processedCount++;
+        } catch (jobError) {
+          this.logger.error('Error processing retry job:', jobError);
+          await this.retryStorage.rescheduleJob(job.id, jobError as Error);
+        } finally {
+          await this.retryStorage.releaseJobLock(job.id);
+        }
+      }
+
+      if (processedCount > 0) {
+        this.logger.info('Processed retry jobs', { processedCount, totalJobs: jobs.length });
+      }
+
+      return processedCount;
+    } catch (error) {
+      this.logger.error('Error processing retry jobs:', error);
+      return 0;
+    }
+  }
+
+  // Execute a specific retry job
+  private async executeRetryJob(job: any): Promise<boolean> {
+    try {
+      if (job.operation.startsWith('kafka_publish_')) {
+        // Handle Kafka publish retry
+        const { topic, message } = job.data;
+        
+        // Use the appropriate publish method based on topic
+        if (topic === 'git_events') {
+          const result = await kafkaProducer.publishGitEvent(message);
+          return result.success;
+        } else if (topic === 'ide_telemetry') {
+          const result = await kafkaProducer.publishIDETelemetry(message);
+          return result.success;
+        } else {
+          // For other topics, we'll need to add a generic publish method
+          // For now, log and return false
+          this.logger.warn('Unsupported topic for retry', { topic });
+          return false;
+        }
+      } else if (job.operation === 'webhook_processing') {
+        // Handle webhook processing retry
+        // Implementation would depend on your webhook processing logic
+        this.logger.info('Webhook processing retry not implemented yet');
+        return false;
+      } else if (job.operation === 'database_write') {
+        // Handle database write retry
+        // Implementation would depend on your database write logic
+        this.logger.info('Database write retry not implemented yet');
+        return false;
+      } else {
+        this.logger.warn('Unknown retry job operation', { operation: job.operation });
+        return false;
+      }
+    } catch (error) {
+      this.logger.error('Retry job execution failed:', error);
+      return false;
+    }
+  }
+
+  // Get retry storage statistics
+  async getRetryStats(): Promise<any> {
+    try {
+      return await this.retryStorage.getStats();
+    } catch (error) {
+      this.logger.error('Failed to get retry stats:', error);
+      return null;
+    }
+  }
+
+  // Get dead letter jobs for manual inspection
+  async getDeadLetterJobs(limit: number = 100): Promise<any[]> {
+    try {
+      return await this.retryStorage.getDeadLetterJobs(limit);
+    } catch (error) {
+      this.logger.error('Failed to get dead letter jobs:', error);
+      return [];
+    }
+  }
+
+  // Reprocess a dead letter job
+  async reprocessDeadLetterJob(deadLetterJobId: string): Promise<string | null> {
+    try {
+      return await this.retryStorage.reprocessDeadLetterJob(deadLetterJobId);
+    } catch (error) {
+      this.logger.error('Failed to reprocess dead letter job:', error);
+      return null;
+    }
+  }
+
+  // Cleanup expired jobs
+  async cleanupExpiredJobs(maxAgeMs?: number): Promise<number> {
+    try {
+      return await this.retryStorage.cleanupExpiredJobs(maxAgeMs);
+    } catch (error) {
+      this.logger.error('Failed to cleanup expired jobs:', error);
+      return 0;
+    }
+  }
+
+  // Graceful shutdown
+  async shutdown(): Promise<void> {
+    try {
+      alertingSystem.stop();
+      await this.retryStorage.disconnect();
+      this.logger.info('Error handler shutdown completed');
+    } catch (error) {
+      this.logger.error('Error during shutdown:', error);
+    }
+  }
+
+  // Helper methods for error categorization and metrics
+  private categorizeError(error: Error): string {
+    const message = error.message.toLowerCase();
+    
+    if (message.includes('timeout') || message.includes('etimedout')) {
+      return 'timeout_error';
+    } else if (message.includes('connection') || message.includes('econnrefused')) {
+      return 'connection_error';
+    } else if (message.includes('network') || message.includes('enotfound')) {
+      return 'network_error';
+    } else if (message.includes('validation') || message.includes('invalid')) {
+      return 'validation_error';
+    } else if (message.includes('permission') || message.includes('unauthorized')) {
+      return 'permission_error';
+    } else if (message.includes('rate limit') || message.includes('throttle')) {
+      return 'rate_limit_error';
+    } else {
+      return 'unknown_error';
+    }
+  }
+
+  private categorizeKafkaError(error: Error): string {
+    const message = error.message.toLowerCase();
+    
+    if (message.includes('broker') || message.includes('leader')) {
+      return 'broker_error';
+    } else if (message.includes('connection') || message.includes('network')) {
+      return 'connection_error';
+    } else if (message.includes('timeout')) {
+      return 'timeout_error';
+    } else if (message.includes('serialization') || message.includes('deserialization')) {
+      return 'serialization_error';
+    } else if (message.includes('partition') || message.includes('offset')) {
+      return 'partition_error';
+    } else {
+      return 'unknown_kafka_error';
+    }
+  }
+
+  private getErrorSeverity(
+    error: Error, 
+    currentAttempt: number, 
+    maxAttempts: number
+  ): 'low' | 'medium' | 'high' | 'critical' {
+    const message = error.message.toLowerCase();
+    
+    // Critical errors
+    if (message.includes('out of memory') || 
+        message.includes('disk full') || 
+        message.includes('security') ||
+        message.includes('unauthorized')) {
+      return 'critical';
+    }
+    
+    // High severity for final attempts or connection issues
+    if (currentAttempt >= maxAttempts || 
+        message.includes('connection refused') ||
+        message.includes('network unreachable')) {
+      return 'high';
+    }
+    
+    // Medium severity for retryable errors
+    if (message.includes('timeout') || 
+        message.includes('rate limit') ||
+        message.includes('temporary')) {
+      return 'medium';
+    }
+    
+    // Low severity for validation and other recoverable errors
+    return 'low';
+  }
+
+  // Get alerting system instance
+  public getAlertingSystem() {
+    return alertingSystem;
+  }
+
+  // Get metrics collector instance
+  public getMetricsCollector() {
+    return errorMetricsCollector;
   }
 }
 

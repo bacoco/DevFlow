@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Layout } from 'react-grid-layout';
 import { DashboardGrid } from '../Layout/DashboardGrid';
-import { Widget, Dashboard as DashboardType, WidgetConfig } from '../../types/dashboard';
+import { Widget, Dashboard as DashboardType, WidgetConfig, WidgetData } from '../../types/dashboard';
 import { WidgetSelector } from '../Widget/WidgetSelector';
 import { WidgetConfigModal } from '../Widget/WidgetConfigModal';
 import { DashboardPreferences } from './DashboardPreferences';
-import { Settings, Plus, Save, Download, Upload, Sliders } from 'lucide-react';
+import { WebSocketStatus } from '../../contexts/WebSocketContext';
+import { useWebSocketContext } from '../../contexts/WebSocketContext';
+import { Settings, Plus, Save, Download, Upload, Sliders, Wifi, WifiOff } from 'lucide-react';
 import { dashboardService } from '../../services/dashboardService';
 
 interface DashboardProps {
@@ -21,6 +23,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onWidgetAdd,
   className = ''
 }) => {
+  const { isConnected, connectionState } = useWebSocketContext();
   const [isEditing, setIsEditing] = useState(false);
   const [layouts, setLayouts] = useState<{ [key: string]: Layout[] }>({});
   const [widgets, setWidgets] = useState<Widget[]>(dashboard.widgets);
@@ -28,6 +31,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [configWidget, setConfigWidget] = useState<Widget | null>(null);
   const [showPreferences, setShowPreferences] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [liveUpdateCount, setLiveUpdateCount] = useState(0);
 
   useEffect(() => {
     setWidgets(dashboard.widgets);
@@ -81,6 +85,32 @@ export const Dashboard: React.FC<DashboardProps> = ({
     // Simulate data refresh
     console.log(`Refreshing widget: ${widgetId}`);
     // In a real app, this would trigger a data fetch
+  };
+
+  const handleWidgetDataUpdate = (widgetId: string, data: WidgetData) => {
+    setWidgets(prevWidgets => 
+      prevWidgets.map(widget => 
+        widget.id === widgetId 
+          ? { ...widget, data }
+          : widget
+      )
+    );
+    
+    setLiveUpdateCount(prev => prev + 1);
+
+    // Optionally persist the updated data
+    if (onDashboardUpdate) {
+      const updatedDashboard = {
+        ...dashboard,
+        widgets: widgets.map(widget => 
+          widget.id === widgetId 
+            ? { ...widget, data }
+            : widget
+        ),
+        updatedAt: new Date(),
+      };
+      onDashboardUpdate(updatedDashboard);
+    }
   };
 
   const handleWidgetConfigure = (widgetId: string) => {
@@ -230,9 +260,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
       <div className="flex items-center justify-between mb-6 p-4 bg-white rounded-lg shadow-sm border border-gray-200">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{dashboard.name}</h1>
-          <p className="text-sm text-gray-600">
-            Last updated: {new Date(dashboard.updatedAt).toLocaleString()}
-          </p>
+          <div className="flex items-center space-x-4 text-sm text-gray-600">
+            <span>Last updated: {new Date(dashboard.updatedAt).toLocaleString()}</span>
+            {liveUpdateCount > 0 && (
+              <span className="text-green-600 font-medium">
+                {liveUpdateCount} live updates
+              </span>
+            )}
+          </div>
+        </div>
+        
+        {/* WebSocket Status */}
+        <div className="flex items-center space-x-4">
+          <WebSocketStatus showDetails={true} />
         </div>
         
         <div className="flex items-center space-x-3">
@@ -324,6 +364,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         onWidgetRefresh={handleWidgetRefresh}
         onWidgetConfigure={handleWidgetConfigure}
         onWidgetRemove={handleWidgetRemove}
+        onWidgetDataUpdate={handleWidgetDataUpdate}
         isEditable={isEditing}
         className="min-h-screen"
       />

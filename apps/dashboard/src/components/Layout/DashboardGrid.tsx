@@ -1,8 +1,9 @@
 import React from 'react';
 import { Responsive, WidthProvider, Layout } from 'react-grid-layout';
-import { Widget as WidgetType } from '../../types/dashboard';
+import { Widget as WidgetType, WidgetData } from '../../types/dashboard';
 import { Widget } from '../Widget/Widget';
 import { MetricCard } from '../Widget/MetricCard';
+import { RealTimeWidget } from '../Widget/RealTimeWidget';
 import { LineChart } from '../Charts/LineChart';
 import { BarChart } from '../Charts/BarChart';
 import { GripVertical } from 'lucide-react';
@@ -18,6 +19,7 @@ interface DashboardGridProps {
   onWidgetRefresh?: (widgetId: string) => void;
   onWidgetConfigure?: (widgetId: string) => void;
   onWidgetRemove?: (widgetId: string) => void;
+  onWidgetDataUpdate?: (widgetId: string, data: WidgetData) => void;
   isEditable?: boolean;
   className?: string;
 }
@@ -29,6 +31,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
   onWidgetRefresh,
   onWidgetConfigure,
   onWidgetRemove,
+  onWidgetDataUpdate,
   isEditable = false,
   className = ''
 }) => {
@@ -41,6 +44,60 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
       isEditable,
     };
 
+    // Wrap widgets that can benefit from real-time updates
+    const shouldUseRealTime = ['metric_card', 'line_chart', 'bar_chart', 'flow_state'].includes(widget.type);
+
+    if (shouldUseRealTime && onWidgetDataUpdate) {
+      return (
+        <RealTimeWidget
+          widget={widget}
+          onDataUpdate={onWidgetDataUpdate}
+          className="h-full"
+        >
+          {({ widget: updatedWidget, isLive, isLoading, error, lastUpdate }) => (
+            <div className="h-full relative">
+              {renderStaticWidget(updatedWidget, commonProps)}
+              
+              {/* Real-time status indicators */}
+              {isLive && (
+                <div className="absolute top-2 left-2 flex items-center space-x-1 z-10">
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                  <span className="text-xs text-green-600 font-medium bg-white px-1 rounded">
+                    LIVE
+                  </span>
+                </div>
+              )}
+              
+              {error && (
+                <div className="absolute top-2 left-2 flex items-center space-x-1 z-10">
+                  <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                  <span className="text-xs text-red-600 font-medium bg-white px-1 rounded" title={error.message}>
+                    ERROR
+                  </span>
+                </div>
+              )}
+              
+              {isLoading && (
+                <div className="absolute inset-0 bg-white bg-opacity-50 flex items-center justify-center z-20">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+                </div>
+              )}
+              
+              {lastUpdate && (
+                <div className="absolute bottom-2 right-2 text-xs text-gray-500 bg-white px-1 rounded">
+                  Updated: {lastUpdate.toLocaleTimeString()}
+                </div>
+              )}
+            </div>
+          )}
+        </RealTimeWidget>
+      );
+    }
+
+    return renderStaticWidget(widget, commonProps);
+  };
+
+  const renderStaticWidget = (widget: WidgetType, commonProps: any) => {
     switch (widget.type) {
       case 'metric_card':
         return <MetricCard {...commonProps} />;
@@ -103,6 +160,27 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
                   <span className="font-medium">Build #123</span> completed successfully
                 </div>
                 <div className="text-xs text-gray-500">10m ago</div>
+              </div>
+            </div>
+          </Widget>
+        );
+      
+      case 'flow_state':
+        return (
+          <Widget {...commonProps}>
+            <div className="h-full flex flex-col justify-center items-center space-y-4">
+              <div className="text-4xl">🧘</div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-blue-600">
+                  {widget.data?.summary?.current || 0}%
+                </div>
+                <div className="text-sm text-gray-600">Flow State</div>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div 
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${widget.data?.summary?.current || 0}%` }}
+                ></div>
               </div>
             </div>
           </Widget>

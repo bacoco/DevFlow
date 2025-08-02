@@ -1,0 +1,68 @@
+{
+  "infrastructure": {
+    "MongoDB": {
+      "status": "RUNNING",
+      "port": 27017
+    },
+    "InfluxDB": {
+      "status": "RUNNING",
+      "port": 8086
+    },
+    "Redis": {
+      "status": "RUNNING",
+      "port": 6379
+    },
+    "Kafka": {
+      "status": "RUNNING",
+      "port": 9092
+    },
+    "Zookeeper": {
+      "status": "RUNNING",
+      "port": 2181
+    }
+  },
+  "services": {
+    "API Gateway": {
+      "status": "HEALTHY",
+      "statusCode": 200,
+      "responseTime": 5
+    },
+    "Data Ingestion": {
+      "status": "HEALTHY",
+      "statusCode": 200,
+      "responseTime": 3
+    },
+    "Stream Processing": {
+      "status": "HEALTHY",
+      "statusCode": 200,
+      "responseTime": 2
+    },
+    "ML Pipeline": {
+      "status": "HEALTHY",
+      "statusCode": 200,
+      "responseTime": 4
+    },
+    "Dashboard": {
+      "status": "HEALTHY",
+      "statusCode": 200,
+      "responseTime": 3
+    }
+  },
+  "integration": {
+    "graphql": {
+      "status": "WORKING",
+      "statusCode": 200
+    },
+    "websocket": {
+      "status": "FAILED",
+      "error": "Unexpected server response: 404"
+    },
+    "dataFlow": {
+      "status": "WORKING"
+    }
+  },
+  "errors": [],
+  "fixes": [],
+  "timestamp": "2025-07-30T13:38:55.801Z",
+  "runCount": 46
+}

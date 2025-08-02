@@ -196,6 +196,51 @@ DevFlow Intelligence is an AI-powered developer productivity dashboard that auto
 2. WHEN productivity patterns change THEN the system SHALL **notify** through IDE notifications with actionable recommendations
     Given pattern change, When detected, Then IDE notification appears with suggestions
 
+### RF-013
+
+**User Story:** As a developer, I want to visualize my codebase evolution in 3D space, so that I can understand the historical context and architectural impact of code changes over time.
+
+#### Acceptance Criteria
+
+1. WHEN accessing the code archaeology view THEN the system SHALL **render** a 3D representation of code artifacts with temporal layering showing code evolution
+    Given codebase analysis complete, When 3D view loads, Then artifacts appear positioned in 3D space within 3 seconds
+2. WHEN navigating through time THEN the system SHALL **animate** code changes showing file additions, modifications, deletions, and moves
+    Given time navigation controls, When user changes time period, Then smooth transitions show code evolution
+3. WHEN selecting code artifacts THEN the system SHALL **display** detailed information including change history, authors, and complexity metrics
+    Given artifact selection, When user clicks on 3D object, Then information panel appears with comprehensive metadata
+4. WHEN filtering by criteria THEN the system SHALL **update** the 3D view to show only relevant code artifacts based on file type, author, or date range
+    Given filter application, When criteria are set, Then view updates to hide irrelevant artifacts within 1 second
+
+### RF-014
+
+**User Story:** As a product manager, I want to see visual connections between requirements and code implementations, so that I can verify feature completeness and understand development effort distribution.
+
+#### Acceptance Criteria
+
+1. WHEN parsing specification files THEN the system SHALL **extract** traceability links between requirements in .kiro/specs and corresponding code artifacts
+    Given traceability.md files, When parsing occurs, Then requirement-to-code mappings are accurately identified
+2. WHEN visualizing spec-code relationships THEN the system SHALL **display** visual connections between requirements and their implementations in 3D space
+    Given relationship data, When visualization renders, Then connections are shown as lines or highlighted paths
+3. WHEN selecting a requirement THEN the system SHALL **highlight** all related code artifacts and show implementation coverage metrics
+    Given requirement selection, When user clicks on spec item, Then related code glows and coverage percentage is displayed
+4. WHEN analyzing coverage gaps THEN the system SHALL **identify** requirements without corresponding code implementations and flag them for attention
+    Given coverage analysis, When evaluation completes, Then missing implementations are clearly marked
+
+### RF-015
+
+**User Story:** As a tech lead, I want to identify code hotspots and architectural evolution patterns, so that I can make informed refactoring decisions and understand technical debt accumulation.
+
+#### Acceptance Criteria
+
+1. WHEN analyzing code change frequency THEN the system SHALL **identify** files and functions that are modified most often and visualize them as hotspots
+    Given change history analysis, When hotspot detection runs, Then frequently changed areas are highlighted with heat map colors
+2. WHEN detecting architectural patterns THEN the system SHALL **recognize** structural changes, dependency shifts, and design pattern evolution over time
+    Given pattern analysis, When detection occurs, Then architectural trends are identified and visualized in 3D space
+3. WHEN correlating with productivity metrics THEN the system SHALL **link** code archaeology insights with existing flow metrics and team performance data
+    Given correlation analysis, When linking occurs, Then insights show impact of code changes on developer productivity
+4. WHEN measuring technical debt THEN the system SHALL **quantify** complexity growth, code duplication, and maintenance burden in visual form
+    Given technical debt analysis, When measurement completes, Then debt accumulation is shown as visual indicators in 3D view
+
 ## Non-Functional Requirements
 
 ### RN-001

@@ -1,4 +1,5 @@
 import { Dashboard, Widget, WidgetConfig } from '../types/dashboard';
+import { authService } from './authService';
 
 export interface DashboardLayoutData {
   dashboardId: string;
@@ -62,7 +63,7 @@ class DashboardService {
       // Try to get the user ID from the stored dashboard data first
       const layouts = this.getLocalStorageLayouts();
       const layoutData = layouts[dashboardId];
-      const userId = layoutData?.userId || 'current-user';
+      const userId = layoutData?.userId || this.getCurrentUserId();
       
       const dashboard = await this.loadDashboardLayout(dashboardId, userId);
       if (!dashboard) {
@@ -96,7 +97,7 @@ class DashboardService {
       // Try to get the user ID from the stored dashboard data first
       const layouts = this.getLocalStorageLayouts();
       const layoutData = layouts[dashboardId];
-      const userId = layoutData?.userId || 'current-user';
+      const userId = layoutData?.userId || this.getCurrentUserId();
       
       const dashboard = await this.loadDashboardLayout(dashboardId, userId);
       if (!dashboard) {
@@ -124,7 +125,7 @@ class DashboardService {
       // Try to get the user ID from the stored dashboard data first
       const layouts = this.getLocalStorageLayouts();
       const layoutData = layouts[dashboardId];
-      const userId = layoutData?.userId || 'current-user';
+      const userId = layoutData?.userId || this.getCurrentUserId();
       
       const dashboard = await this.loadDashboardLayout(dashboardId, userId);
       if (!dashboard) {
@@ -215,7 +216,7 @@ class DashboardService {
 
       const dashboard: Dashboard = {
         id: dashboardId,
-        userId: 'current-user', // TODO: Get actual user ID
+        userId: this.getCurrentUserId(),
         name: data.dashboard.name,
         widgets: data.dashboard.widgets.map((widget: any, index: number) => ({
           id: `widget-${Date.now()}-${index}`,
@@ -302,11 +303,16 @@ class DashboardService {
   }
 
   private async saveToServer(dashboard: Dashboard): Promise<void> {
+    const token = authService.getStoredToken();
+    if (!token) {
+      throw new Error('Authentication required');
+    }
+
     const response = await fetch(`${this.API_BASE_URL}/api/dashboards/${dashboard.id}/layout`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
-        // TODO: Add authentication headers
+        'Authorization': `Bearer ${token}`,
       },
       body: JSON.stringify({
         layout: dashboard.layout,
@@ -315,20 +321,95 @@ class DashboardService {
       }),
     });
 
+    if (response.status === 401) {
+      // Token might be expired, try to refresh
+      try {
+        await authService.refreshToken(token);
+        // Retry the request with new token
+        const newToken = authService.getStoredToken();
+        if (newToken) {
+          const retryResponse = await fetch(`${this.API_BASE_URL}/api/dashboards/${dashboard.id}/layout`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${newToken}`,
+            },
+            body: JSON.stringify({
+              layout: dashboard.layout,
+              widgets: dashboard.widgets,
+              updatedAt: dashboard.updatedAt,
+            }),
+          });
+          
+          if (!retryResponse.ok) {
+            throw new Error(`Server error: ${retryResponse.status}`);
+          }
+          return;
+        }
+      } catch (refreshError) {
+        throw new Error('Authentication failed');
+      }
+    }
+
     if (!response.ok) {
       throw new Error(`Server error: ${response.status}`);
     }
   }
 
   private async loadFromServer(dashboardId: string, userId: string): Promise<Dashboard | null> {
+    const token = authService.getStoredToken();
+    if (!token) {
+      throw new Error('Authentication required');
+    }
+
     const response = await fetch(`${this.API_BASE_URL}/api/dashboards/${dashboardId}/layout`, {
       headers: {
-        // TODO: Add authentication headers
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
       },
     });
 
     if (response.status === 404) {
       return null;
+    }
+
+    if (response.status === 401) {
+      // Token might be expired, try to refresh
+      try {
+        await authService.refreshToken(token);
+        // Retry the request with new token
+        const newToken = authService.getStoredToken();
+        if (newToken) {
+          const retryResponse = await fetch(`${this.API_BASE_URL}/api/dashboards/${dashboardId}/layout`, {
+            headers: {
+              'Authorization': `Bearer ${newToken}`,
+              'Content-Type': 'application/json',
+            },
+          });
+          
+          if (retryResponse.status === 404) {
+            return null;
+          }
+          
+          if (!retryResponse.ok) {
+            throw new Error(`Server error: ${retryResponse.status}`);
+          }
+          
+          const data = await retryResponse.json();
+          return {
+            id: dashboardId,
+            userId: userId,
+            name: data.name || `Dashboard ${dashboardId}`,
+            widgets: data.widgets,
+            layout: data.layout,
+            isDefault: data.isDefault || false,
+            createdAt: new Date(data.createdAt),
+            updatedAt: new Date(data.updatedAt),
+          };
+        }
+      } catch (refreshError) {
+        throw new Error('Authentication failed');
+      }
     }
 
     if (!response.ok) {
@@ -351,6 +432,22 @@ class DashboardService {
   private isServerAvailable(): boolean {
     // Simple check - in a real app, you might want to ping the server
     return !!this.API_BASE_URL && this.API_BASE_URL !== 'http://localhost:3001';
+  }
+
+  private getCurrentUserId(): string {
+    const token = authService.getStoredToken();
+    if (!token) {
+      return 'anonymous';
+    }
+
+    try {
+      // Decode JWT token to get user ID
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.userId || 'unknown';
+    } catch (error) {
+      console.error('Failed to decode token:', error);
+      return 'unknown';
+    }
   }
 }
 

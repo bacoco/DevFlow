@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { Dashboard } from '../components/Dashboard/Dashboard';
 import { OnboardingWizard } from '../components/Onboarding/OnboardingWizard';
+import { WebSocketProvider } from '../contexts/WebSocketContext';
+import { AuthProvider } from '../contexts/AuthContext';
+import { ProtectedRoute } from '../components/Auth/ProtectedRoute';
 import { Dashboard as DashboardType, Widget } from '../types/dashboard';
 import { OnboardingData } from '../types/onboarding';
 import '../styles/dashboard.css';
@@ -233,9 +236,10 @@ function getRoleSpecificWidgets(role: string): Widget[] {
   }
 }
 
-export default function Home() {
+const DashboardContent: React.FC = () => {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [currentDashboard, setCurrentDashboard] = useState<DashboardType>(mockDashboard);
+  const [isWebSocketConnected, setIsWebSocketConnected] = useState(false);
 
   // Check if user needs onboarding (in real app, this would check user preferences)
   useEffect(() => {
@@ -291,22 +295,48 @@ export default function Home() {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.ico" />
       </Head>
-      <main className="min-h-screen bg-gray-50">
-        <div className="container mx-auto px-4 py-8">
-          <Dashboard
-            dashboard={currentDashboard}
-            onDashboardUpdate={handleDashboardUpdate}
-            onWidgetAdd={handleWidgetAdd}
-          />
-        </div>
-      </main>
+      <WebSocketProvider 
+        autoConnect={true}
+        onConnectionChange={setIsWebSocketConnected}
+      >
+        <main className="min-h-screen bg-gray-50">
+          {/* Connection Status Banner */}
+          {!isWebSocketConnected && (
+            <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2">
+              <div className="container mx-auto">
+                <p className="text-sm text-yellow-800">
+                  ⚠️ Real-time updates are currently unavailable. Dashboard will show cached data.
+                </p>
+              </div>
+            </div>
+          )}
+          
+          <div className="container mx-auto px-4 py-8">
+            <Dashboard
+              dashboard={currentDashboard}
+              onDashboardUpdate={handleDashboardUpdate}
+              onWidgetAdd={handleWidgetAdd}
+            />
+          </div>
+        </main>
 
-      {/* Onboarding Wizard */}
-      <OnboardingWizard
-        isOpen={showOnboarding}
-        onComplete={handleOnboardingComplete}
-        onSkip={handleOnboardingSkip}
-      />
+        {/* Onboarding Wizard */}
+        <OnboardingWizard
+          isOpen={showOnboarding}
+          onComplete={handleOnboardingComplete}
+          onSkip={handleOnboardingSkip}
+        />
+      </WebSocketProvider>
     </>
+  );
+};
+
+export default function Home() {
+  return (
+    <AuthProvider>
+      <ProtectedRoute>
+        <DashboardContent />
+      </ProtectedRoute>
+    </AuthProvider>
   );
 }

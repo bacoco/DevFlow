@@ -95,7 +95,7 @@
   - Write integration tests for access control enforcement
   - _Requirements: RF-003, RF-010_
 
-- [-] 7. Implement machine learning pipeline and model management
+- [x] 7. Implement machine learning pipeline and model management
 - [x] 7.1 Create feature engineering pipeline
   - Build feature extraction from productivity metrics
   - Implement feature normalization and scaling
@@ -294,3 +294,334 @@
   - Implement cross-region data replication
   - Write disaster recovery validation tests
   - _Requirements: RN-002_
+
+## Additional Implementation Tasks
+
+- [x] 18. Implement real-time dashboard updates
+- [x] 18.1 Build WebSocket client integration in dashboard
+  - Create WebSocket client service for real-time data streaming
+  - Implement connection management with automatic reconnection
+  - Build real-time widget data updates without page refresh
+  - Write integration tests for WebSocket client reliability
+  - _Requirements: RF-004, RN-001_
+
+- [x] 18.2 Implement dashboard auto-refresh and live metrics
+  - Create configurable auto-refresh intervals for dashboard widgets
+  - Build real-time metric streaming from backend services
+  - Implement efficient data synchronization to prevent UI flickering
+  - Write performance tests for real-time update efficiency
+  - _Requirements: RF-004, RN-001_
+
+- [x] 19. Complete authentication system integration
+- [x] 19.1 Implement user authentication in dashboard frontend
+  - Create login/logout components with proper error handling
+  - Implement JWT token management and automatic refresh
+  - Build protected route components with role-based access
+  - Write authentication integration tests for frontend
+  - _Requirements: RF-003, RN-005_
+
+- [x] 19.2 Complete authentication middleware integration
+  - Remove TODO comments and implement actual user ID retrieval
+  - Add proper authentication headers to all API calls
+  - Implement session management and token validation
+  - Write security tests for authentication flow
+  - _Requirements: RF-003, RN-005_
+
+- [x] 20. Build mobile application
+- [x] 20.1 Create React Native mobile app foundation
+  - Set up React Native project with TypeScript configuration
+  - Implement navigation structure for mobile dashboard
+  - Create responsive mobile UI components for key metrics
+  - Write mobile-specific unit tests
+  - _Requirements: RF-004, RF-006_
+
+- [x] 20.2 Implement mobile-specific features
+  - Build push notification system for mobile alerts
+  - Create offline data caching for mobile connectivity
+  - Implement mobile-optimized charts and visualizations
+  - Write mobile integration tests and performance tests
+  - _Requirements: RF-004, RF-005_
+
+- [x] 21. Complete error handling and retry mechanisms
+- [x] 21.1 Implement comprehensive retry storage system
+  - Replace TODO comments with actual Redis-based retry storage
+  - Build exponential backoff with jitter for failed operations
+  - Create dead letter queue processing for persistent failures
+  - Write integration tests for retry mechanism reliability
+  - _Requirements: RF-001_
+
+- [x] 21.2 Build alerting and metrics collection system
+  - Implement actual alerting mechanism for system failures
+  - Create Prometheus metrics collection for error rates
+  - Build comprehensive error monitoring and reporting
+  - Write monitoring integration tests
+  - _Requirements: RN-002, RN-005_
+
+- [x] 22. Implement Code Archaeology Service Foundation
+- [x] 22.1 Create AST parsing and code structure analysis
+  - Build TypeScript/JavaScript AST parser using ts-morph for code structure extraction
+  - Implement function and class definition detection with complexity metrics
+  - Create dependency graph analysis for code relationships
+  - Write unit tests for AST parsing accuracy and performance
+  - _Requirements: RF-013, RF-015_
+
+- [x] 22.2 Build enhanced Git history analyzer for archaeology
+  - Extend existing Git collector to include detailed file change analysis
+  - Implement commit-level code change tracking with line-by-line diff analysis
+  - Create author contribution tracking and change frequency calculation
+  - Integrate Git analysis with existing CodeArchaeologyService to populate changeFrequency and authors fields
+  - Write integration tests for Git history analysis accuracy
+  - _Requirements: RF-013, RF-015_
+
+- [x] 22.3 Implement traceability parser for spec-code linking
+  - Create parser for .kiro/specs markdown files to extract requirement references from task descriptions
+  - Build traceability.md parser to identify requirement-to-code mappings and populate the matrix
+  - Implement confidence scoring for automatic traceability link detection
+  - Create service to link parsed requirements with code artifacts from AST analysis
+  - Write unit tests for traceability parsing and link validation
+  - _Requirements: RF-014_
+
+- [x] 23. Build 3D Visualization Engine
+- [x] 23.1 Complete React Three Fiber 3D scene implementation
+  - Implement Scene3D.tsx component with artifact rendering logic
+  - Create 3D object representations for files, functions, classes, and interfaces
+  - Add interactive selection and hover effects for code artifacts
+  - Implement proper lighting and material systems for visual differentiation
+  - Write component tests for 3D scene functionality and interaction
+  - _Requirements: RF-013_
+
+- [x] 23.2 Implement temporal layering and animation system
+  - Build temporal navigation controls with smooth time-based transitions
+  - Create animation system for code evolution showing additions/deletions/modifications
+  - Implement layered visualization where older code appears in deeper strata
+  - Write performance tests for smooth animation with large codebases
+  - _Requirements: RF-013_
+
+- [x] 23.3 Build 3D positioning algorithms for code artifacts
+  - Create algorithms to position files, functions, and classes in 3D space
+  - Implement clustering algorithms to group related code artifacts
+  - Build force-directed layout for dependency visualization
+  - Write unit tests for positioning algorithm consistency and performance
+  - _Requirements: RF-013, RF-015_
+
+- [x] 24. Implement Traceability Visualization System
+- [x] 24.1 Create visual connections between specs and code
+  - Build 3D line rendering system to connect requirements with implementations
+  - Implement highlighting system for requirement selection with visual emphasis
+  - Create interactive exploration of spec-code relationships with hover effects
+  - Write UI tests for traceability interaction flows and visual feedback
+  - _Requirements: RF-014_
+
+- [x] 24.2 Build coverage analysis and gap detection
+  - Implement requirement coverage calculation showing implementation completeness
+  - Create visual indicators for missing implementations and orphaned code
+  - Build coverage metrics dashboard with percentage tracking
+  - Write integration tests for coverage analysis accuracy
+  - _Requirements: RF-014_
+
+- [x] 25. Implement Code Hotspot Detection and Analysis
+- [x] 25.1 Build hotspot detection algorithms
+  - Create change frequency analysis to identify most modified files and functions
+  - Implement complexity trend analysis showing technical debt accumulation
+  - Build risk scoring system combining change frequency, complexity, and author count
+  - Write unit tests for hotspot detection accuracy and ranking
+  - _Requirements: RF-015_
+
+- [x] 25.2 Create architectural pattern recognition
+  - Implement ML-based pattern detection for architectural changes over time
+  - Build dependency shift analysis to track structural evolution
+  - Create design pattern recognition using code structure analysis
+  - Write integration tests for pattern recognition accuracy
+  - _Requirements: RF-015_
+
+- [x] 25.3 Integrate archaeology insights with productivity metrics
+  - Correlate code hotspots with developer flow metrics and productivity data
+  - Build combined visualizations showing code health impact on team performance
+  - Create recommendations linking code refactoring to productivity improvements
+  - Write integration tests for metric correlation accuracy
+  - _Requirements: RF-015, RF-002c_
+
+- [-] 26. Build Advanced 3D Visualization Features
+- [x] 26.1 Implement filtering and search functionality
+  - Create multi-criteria filtering system (file type, author, date range, complexity)
+  - Build search functionality for code artifacts and requirements with highlighting
+  - Implement saved view configurations for common exploration patterns
+  - Write UI tests for filtering performance and search accuracy
+  - _Requirements: RF-013, RF-014_
+
+- [x] 26.2 Create interactive artifact inspection system
+  - Build detailed information panels for selected code artifacts
+  - Implement code snippet preview with syntax highlighting
+  - Create change history timeline for individual artifacts
+  - Write component tests for information panel functionality
+  - _Requirements: RF-013_
+
+- [x] 26.3 Build collaborative exploration features
+  - Implement shared 3D view sessions for team code reviews
+  - Create annotation system for marking areas of interest in 3D space
+  - Build view sharing and bookmark functionality
+  - Write integration tests for collaborative features
+  - _Requirements: RF-013, RF-014_
+
+- [ ] 27. Optimize 3D Performance and Scalability
+- [x] 27.1 Implement level-of-detail (LOD) rendering
+  - Create adaptive rendering based on zoom level and viewport distance
+  - Implement efficient culling for off-screen artifacts to improve performance
+  - Build progressive loading system for large codebases with lazy loading
+  - Write performance tests for 3D rendering optimization with various codebase sizes
+  - _Requirements: RN-001, RN-006_
+
+- [x] 27.2 Build caching and precomputation system
+  - Create precomputed 3D layouts for common view configurations
+  - Implement intelligent caching of archaeology analysis results with invalidation
+  - Build incremental updates for real-time code changes without full recomputation
+  - Write performance benchmarks for caching effectiveness and memory usage
+  - _Requirements: RN-001_
+
+- [x] 27.3 Implement WebGL optimization and fallbacks
+  - Create WebGL performance monitoring and automatic quality adjustment
+  - Build fallback rendering modes for devices with limited graphics capabilities
+  - Implement memory management for large 3D scenes with garbage collection
+  - Write compatibility tests for various browsers and graphics hardware
+  - _Requirements: RN-001, RN-006_
+
+- [-] 28. Create Code Archaeology Integration Tests
+- [x] 28.1 Build end-to-end archaeology workflow tests
+  - Create comprehensive tests covering Git analysis to 3D visualization pipeline
+  - Implement traceability accuracy tests with known requirement-code mappings
+  - Build performance tests for large repository analysis and visualization
+  - Write user workflow tests for common archaeology exploration scenarios
+  - _Requirements: RF-013, RF-014, RF-015_
+
+- [ ] 28.2 Create visual regression tests for 3D rendering
+  - Implement screenshot comparison tests for 3D scene consistency
+  - Build animation testing framework for temporal navigation accuracy
+  - Create cross-browser compatibility tests for WebGL rendering
+  - Write accessibility tests for 3D visualization keyboard navigation
+  - _Requirements: RF-013, RN-004_
+
+- [x] 29. Implement ML model packaging and deployment
+- [x] 29.1 Complete model packaging system
+  - Implement tar.gz packaging for ML models when dependency is available
+  - Create model artifact storage and versioning system
+  - Build automated model deployment pipeline
+  - Write model deployment integration tests
+  - _Requirements: RF-002c, RF-007_
+
+- [x] 30. Enhance IDE plugin functionality
+- [x] 30.1 Complete VS Code extension features
+  - Implement real-time productivity metrics display in IDE sidebar
+  - Build IDE notification system for productivity insights
+  - Create context-aware recommendations within IDE
+  - Write IDE plugin integration tests
+  - _Requirements: RF-012, RF-006_
+
+- [-] 31. Complete Mobile Application Implementation
+- [x] 31.1 Implement missing mobile navigation and functionality
+  - Complete ProfileScreen navigation to privacy settings, help, and about pages
+  - Implement widget configuration navigation in DashboardScreen
+  - Build alert action execution handlers in AlertsScreen
+  - Create refresh interval picker in SettingsScreen
+  - Write UI tests for mobile navigation flows
+  - _Requirements: RF-004, RF-006_
+
+- [ ] 31.2 Complete mobile notification and offline features
+  - Implement backend token registration for push notifications in NotificationService
+  - Build notification tap handling with proper screen navigation
+  - Complete offline action execution in OfflineService
+  - Add detailed data point views in ChartWidget
+  - Write integration tests for mobile-specific features
+  - _Requirements: RF-004, RF-005_
+
+- [x] 32. Implement Git History Integration for Code Archaeology
+- [x] 32.1 Build Git history analysis service
+  - Create Git repository analyzer using isomorphic-git or similar library
+  - Implement commit history parsing with file-level change tracking
+  - Build author contribution analysis with time-based metrics
+  - Create change frequency calculation algorithms
+  - Write unit tests for Git analysis accuracy and performance
+  - _Requirements: RF-013, RF-015_
+
+- [x] 32.2 Integrate Git analysis with Code Archaeology Service
+  - Extend CodeArchaeologyService to accept Git history data
+  - Populate changeFrequency and authors fields in CodeArtifact objects
+  - Implement hotspot detection based on change frequency and complexity
+  - Create temporal analysis for code evolution tracking
+  - Write integration tests for combined AST and Git analysis
+  - _Requirements: RF-013, RF-015_
+
+- [x] 33. Build Traceability System
+- [x] 33.1 Create requirement parsing service
+  - Build parser for .kiro/specs markdown files to extract requirements
+  - Implement task description parsing to find requirement references
+  - Create requirement-to-code artifact linking algorithms
+  - Build confidence scoring for automatic traceability detection
+  - Write unit tests for requirement parsing accuracy
+  - _Requirements: RF-014_
+
+- [x] 33.2 Implement traceability matrix population
+  - Create service to populate traceability.md with discovered links
+  - Build coverage analysis to identify missing implementations
+  - Implement gap detection for requirements without code artifacts
+  - Create traceability validation and verification workflows
+  - Write integration tests for end-to-end traceability tracking
+  - _Requirements: RF-014_
+
+- [-] 34. Complete Code Archaeology Dashboard Integration
+- [x] 34.1 Build coverage analysis dashboard component
+  - Create CoverageAnalysisPanel component to display requirement coverage metrics
+  - Implement visual indicators for implementation gaps and orphaned code
+  - Build interactive coverage percentage tracking with drill-down capabilities
+  - Create gap analysis visualization showing missing implementations
+  - Write component tests for coverage analysis UI functionality
+  - _Requirements: RF-014_
+
+- [ ] 34.2 Implement artifact inspection panel system
+  - Build detailed ArtifactInspectionPanel component for selected code artifacts
+  - Implement code snippet preview with syntax highlighting using Prism.js
+  - Create change history timeline component for individual artifacts
+  - Build dependency visualization within inspection panel
+  - Write component tests for inspection panel functionality and interactions
+  - _Requirements: RF-013_
+
+- [ ] 34.3 Create architectural pattern recognition service
+  - Implement ML-based pattern detection algorithms for architectural changes over time
+  - Build dependency shift analysis to track structural evolution patterns
+  - Create design pattern recognition using AST analysis and code structure
+  - Implement pattern trend visualization in 3D space
+  - Write integration tests for pattern recognition accuracy and performance
+  - _Requirements: RF-015_
+
+- [-] 35. Build Performance Optimization for 3D Visualization
+- [x] 35.1 Implement level-of-detail (LOD) rendering system
+  - Create adaptive rendering based on camera distance and zoom level
+  - Implement efficient frustum culling for off-screen artifacts
+  - Build progressive loading system for large codebases with lazy loading
+  - Create memory management system for 3D scenes with garbage collection
+  - Write performance tests for 3D rendering optimization with various codebase sizes
+  - _Requirements: RN-001, RN-006_
+
+- [ ] 35.2 Build WebGL optimization and fallback systems
+  - Create WebGL performance monitoring and automatic quality adjustment
+  - Build fallback rendering modes for devices with limited graphics capabilities
+  - Implement texture atlasing and geometry instancing for performance
+  - Create cross-browser compatibility layer for WebGL features
+  - Write compatibility tests for various browsers and graphics hardware
+  - _Requirements: RN-001, RN-006_
+
+- [-] 36. Complete Integration Testing for Code Archaeology
+- [x] 36.1 Build end-to-end archaeology workflow tests
+  - Create comprehensive tests covering Git analysis to 3D visualization pipeline
+  - Implement traceability accuracy tests with known requirement-code mappings
+  - Build performance tests for large repository analysis and visualization
+  - Create user workflow tests for common archaeology exploration scenarios
+  - Write visual regression tests for 3D scene consistency
+  - _Requirements: RF-013, RF-014, RF-015_
+
+- [ ] 36.2 Create accessibility and usability tests for 3D features
+  - Implement keyboard navigation tests for 3D visualization accessibility
+  - Build screen reader compatibility tests for code archaeology features
+  - Create cross-browser compatibility tests for WebGL rendering
+  - Write usability tests for 3D interaction patterns and user experience
+  - Implement performance benchmarks for 3D rendering on various devices
+  - _Requirements: RF-013, RN-004_

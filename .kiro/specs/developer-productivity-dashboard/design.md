@@ -15,63 +15,78 @@ graph TB
         B[IDE Telemetry]
         C[Chat/Communication]
         D[CI/CD Pipelines]
+        E[.kiro/specs Files]
     end
     
     subgraph "Ingestion Layer"
-        E[Event Collectors]
-        F[Message Queue]
-        G[Data Validation]
+        F[Event Collectors]
+        G[Message Queue]
+        H[Data Validation]
+        I[Code Archaeology Processor]
     end
     
     subgraph "Processing Layer"
-        H[Stream Processor]
-        I[ML Pipeline]
-        J[Metrics Engine]
-        K[Privacy Filter]
+        J[Stream Processor]
+        K[ML Pipeline]
+        L[Metrics Engine]
+        M[Privacy Filter]
+        N[AST Parser]
+        O[Traceability Linker]
     end
     
     subgraph "Storage Layer"
-        L[Time Series DB]
-        M[Document Store]
-        N[ML Model Store]
-        O[Cache Layer]
+        P[Time Series DB]
+        Q[Document Store]
+        R[ML Model Store]
+        S[Cache Layer]
+        T[Code Artifact Store]
     end
     
     subgraph "API Layer"
-        P[GraphQL API]
-        Q[REST API]
-        R[WebSocket Gateway]
+        U[GraphQL API]
+        V[REST API]
+        W[WebSocket Gateway]
     end
     
     subgraph "Frontend"
-        S[Dashboard UI]
-        T[Mobile App]
-        U[IDE Extensions]
+        X[Dashboard UI]
+        Y[Mobile App]
+        Z[IDE Extensions]
+        AA[3D Code Explorer]
     end
     
-    A --> E
-    B --> E
-    C --> E
-    D --> E
-    E --> F
+    A --> F
+    A --> I
+    B --> F
+    C --> F
+    D --> F
+    E --> I
     F --> G
+    I --> G
     G --> H
-    H --> I
     H --> J
-    H --> K
-    I --> N
+    J --> K
     J --> L
-    K --> M
+    J --> M
+    I --> N
+    I --> O
+    K --> R
     L --> P
-    M --> P
-    N --> P
-    O --> P
-    P --> Q
-    P --> R
-    Q --> S
-    R --> S
-    Q --> T
+    M --> Q
+    N --> T
+    O --> T
+    P --> U
     Q --> U
+    R --> U
+    S --> U
+    T --> U
+    U --> V
+    U --> W
+    V --> X
+    W --> X
+    V --> Y
+    V --> Z
+    AA --> X
 ```
 
 ### Technology Stack
@@ -82,6 +97,8 @@ graph TB
 - **Storage**: InfluxDB for time series, MongoDB for documents, Redis for caching
 - **API**: GraphQL with Apollo Server, REST with Express.js
 - **Frontend**: React with TypeScript, D3.js for visualizations
+- **3D Visualization**: Three.js, React Three Fiber for 3D rendering, WebGL for graphics
+- **Code Analysis**: ts-morph for TypeScript AST parsing, isomorphic-git for Git operations
 - **Infrastructure**: Kubernetes, Docker, Prometheus for monitoring
 
 ## Components and Interfaces
@@ -190,6 +207,49 @@ interface Widget {
   config: WidgetConfig
   data: WidgetData
   permissions: Permission[]
+}
+```
+
+### Code Archaeology Service
+
+**Purpose**: 3D visualization of codebase evolution with traceability linking
+
+**Key Components**:
+- AST Parser: Extract code structure and relationships using ts-morph
+- Git History Analyzer: Enhanced analysis of code changes over time
+- Traceability Linker: Parse .kiro/specs files for requirement-code connections
+- 3D Scene Generator: Transform code data into 3D visualization coordinates
+- Temporal Engine: Manage time-based navigation and animation
+
+**Interfaces**:
+```typescript
+interface CodeArchaeologyService {
+  analyzeCodebase(repositoryPath: string): Promise<CodebaseAnalysis>
+  generateVisualization(analysis: CodebaseAnalysis, config: VisualizationConfig): Visualization3D
+  linkTraceability(specPath: string, codeAnalysis: CodebaseAnalysis): TraceabilityMap
+  detectHotspots(changeHistory: GitHistory): CodeHotspot[]
+  animateEvolution(timeRange: TimeRange, artifacts: CodeArtifact[]): AnimationSequence
+}
+
+interface CodeArtifact {
+  id: string
+  filePath: string
+  type: 'file' | 'function' | 'class' | 'interface'
+  name: string
+  position3D: Vector3D
+  complexity: number
+  changeFrequency: number
+  lastModified: Date
+  authors: string[]
+  dependencies: string[]
+}
+
+interface TraceabilityLink {
+  requirementId: string
+  specFile: string
+  codeArtifacts: string[]
+  linkType: 'implements' | 'tests' | 'documents'
+  confidence: number
 }
 ```
 
@@ -306,6 +366,80 @@ interface Recommendation {
   actionItems: ActionItem[]
   expiresAt: Date
 }
+
+// Code Archaeology Models
+interface CodebaseAnalysis {
+  id: string
+  repositoryPath: string
+  analyzedAt: Date
+  totalFiles: number
+  totalFunctions: number
+  totalClasses: number
+  artifacts: CodeArtifact[]
+  dependencies: DependencyGraph
+  hotspots: CodeHotspot[]
+}
+
+interface CodeHotspot {
+  artifactId: string
+  changeFrequency: number
+  authorCount: number
+  complexityTrend: number[]
+  riskScore: number
+  lastChanged: Date
+}
+
+interface Visualization3D {
+  id: string
+  sceneData: SceneData
+  artifacts: PositionedArtifact[]
+  connections: Connection3D[]
+  animations: AnimationSequence[]
+  metadata: VisualizationMetadata
+}
+
+interface PositionedArtifact {
+  artifact: CodeArtifact
+  position: Vector3D
+  scale: Vector3D
+  rotation: Vector3D
+  color: Color
+  opacity: number
+  visible: boolean
+}
+
+interface Connection3D {
+  fromArtifactId: string
+  toArtifactId: string
+  connectionType: 'dependency' | 'traceability' | 'similarity'
+  strength: number
+  color: Color
+  animated: boolean
+}
+
+interface AnimationSequence {
+  id: string
+  timeRange: TimeRange
+  keyframes: AnimationKeyframe[]
+  duration: number
+  easing: EasingFunction
+}
+
+interface AnimationKeyframe {
+  timestamp: Date
+  artifactChanges: ArtifactChange[]
+  cameraPosition?: Vector3D
+  highlightedArtifacts?: string[]
+}
+
+interface ArtifactChange {
+  artifactId: string
+  changeType: 'added' | 'modified' | 'deleted' | 'moved'
+  newPosition?: Vector3D
+  newScale?: Vector3D
+  newColor?: Color
+  transitionDuration: number
+}
 ```
 
 ### Privacy and Security Models
@@ -403,6 +537,7 @@ interface RecoveryAction {
 - **Performance Testing**: K6 for load testing, JMeter for stress testing
 - **Security Testing**: OWASP ZAP for vulnerability scanning
 - **ML Testing**: Great Expectations for data validation, MLflow for model testing
+- **3D Visualization Testing**: Three.js test utilities, WebGL context mocking
 
 ### Continuous Testing Pipeline
 

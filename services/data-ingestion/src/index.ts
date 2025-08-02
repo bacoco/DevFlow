@@ -8,6 +8,7 @@ import { CodeReviewExtractor } from './collectors/communication/code-review-extr
 import { kafkaAdmin, kafkaProducer } from './kafka';
 import { eventValidator } from './validation/event-validator';
 import { errorHandler } from './validation/error-handler';
+import { retryProcessor } from './validation/retry-processor';
 
 config();
 
@@ -64,6 +65,7 @@ app.get('/health', async (req, res) => {
   try {
     const kafkaProducerHealth = await kafkaProducer.healthCheck();
     const kafkaAdminHealth = await kafkaAdmin.healthCheck();
+    const retryStats = await retryProcessor.getStats();
     
     const overallStatus = kafkaProducerHealth.status === 'healthy' && 
                          kafkaAdminHealth.status === 'healthy' ? 'healthy' : 'unhealthy';
@@ -76,6 +78,10 @@ app.get('/health', async (req, res) => {
       kafka: {
         producer: kafkaProducerHealth,
         admin: kafkaAdminHealth
+      },
+      retrySystem: {
+        isRunning: retryStats.isRunning,
+        stats: retryStats.retryStats
       }
     });
   } catch (error) {
@@ -100,6 +106,20 @@ app.get('/', (req, res) => {
         status: '/kafka/status',
         topics: '/kafka/topics',
         consumers: '/kafka/consumers'
+      },
+      retry: {
+        stats: '/retry/stats',
+        deadLetter: '/retry/dead-letter',
+        reprocess: '/retry/reprocess/:jobId'
+      },
+      metrics: {
+        summary: '/metrics/summary',
+        prometheus: '/metrics'
+      },
+      alerts: {
+        active: '/alerts/active',
+        rules: '/alerts/rules',
+        stats: '/alerts/stats'
       },
       webhooks: {
         github: '/webhooks/github',
@@ -173,6 +193,188 @@ app.get('/kafka/consumers', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: `Failed to get Kafka consumers: ${error}` });
+  }
+});
+
+// Retry system endpoints
+app.get('/retry/stats', async (req, res) => {
+  try {
+    const stats = await retryProcessor.getStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: `Failed to get retry stats: ${error}` });
+  }
+});
+
+app.get('/retry/dead-letter', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 100;
+    const deadLetterJobs = await errorHandler.getDeadLetterJobs(limit);
+    res.json({
+      jobs: deadLetterJobs,
+      count: deadLetterJobs.length
+    });
+  } catch (error) {
+    res.status(500).json({ error: `Failed to get dead letter jobs: ${error}` });
+  }
+});
+
+app.post('/retry/reprocess/:jobId', async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const newJobId = await errorHandler.reprocessDeadLetterJob(jobId);
+    
+    if (newJobId) {
+      res.json({
+        message: 'Dead letter job reprocessed successfully',
+        originalJobId: jobId,
+        newJobId
+      });
+    } else {
+      res.status(404).json({ error: 'Dead letter job not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: `Failed to reprocess dead letter job: ${error}` });
+  }
+});
+
+app.post('/retry/cleanup', async (req, res) => {
+  try {
+    const maxAgeMs = parseInt(req.body.maxAgeMs) || (7 * 24 * 60 * 60 * 1000); // 7 days default
+    const cleanedCount = await errorHandler.cleanupExpiredJobs(maxAgeMs);
+    
+    res.json({
+      message: 'Cleanup completed',
+      cleanedJobsCount: cleanedCount,
+      maxAgeMs
+    });
+  } catch (error) {
+    res.status(500).json({ error: `Failed to cleanup expired jobs: ${error}` });
+  }
+});
+
+// Metrics endpoints
+app.get('/metrics/summary', async (req, res) => {
+  try {
+    const metricsCollector = errorHandler.getMetricsCollector();
+    const summary = await metricsCollector.getMetricsSummary();
+    res.json(summary);
+  } catch (error) {
+    res.status(500).json({ error: `Failed to get metrics summary: ${error}` });
+  }
+});
+
+app.get('/metrics', async (req, res) => {
+  try {
+    const { register } = require('./validation/error-metrics');
+    const metrics = await register.metrics();
+    res.set('Content-Type', register.contentType);
+    res.end(metrics);
+  } catch (error) {
+    res.status(500).json({ error: `Failed to get Prometheus metrics: ${error}` });
+  }
+});
+
+// Alerting endpoints
+app.get('/alerts/active', async (req, res) => {
+  try {
+    const alertingSystem = errorHandler.getAlertingSystem();
+    const activeAlerts = alertingSystem.getActiveAlerts();
+    res.json({
+      alerts: activeAlerts,
+      count: activeAlerts.length
+    });
+  } catch (error) {
+    res.status(500).json({ error: `Failed to get active alerts: ${error}` });
+  }
+});
+
+app.get('/alerts/rules', async (req, res) => {
+  try {
+    const alertingSystem = errorHandler.getAlertingSystem();
+    const rules = alertingSystem.getRules();
+    res.json({
+      rules,
+      count: rules.length
+    });
+  } catch (error) {
+    res.status(500).json({ error: `Failed to get alert rules: ${error}` });
+  }
+});
+
+app.post('/alerts/rules', async (req, res) => {
+  try {
+    const alertingSystem = errorHandler.getAlertingSystem();
+    const rule = req.body;
+    
+    // Basic validation
+    if (!rule.id || !rule.name || !rule.condition) {
+      return res.status(400).json({ error: 'Missing required fields: id, name, condition' });
+    }
+    
+    alertingSystem.addRule(rule);
+    res.status(201).json({ message: 'Alert rule added successfully', ruleId: rule.id });
+  } catch (error) {
+    res.status(500).json({ error: `Failed to add alert rule: ${error}` });
+  }
+});
+
+app.put('/alerts/rules/:ruleId', async (req, res) => {
+  try {
+    const { ruleId } = req.params;
+    const updates = req.body;
+    const alertingSystem = errorHandler.getAlertingSystem();
+    
+    const success = alertingSystem.updateRule(ruleId, updates);
+    if (success) {
+      res.json({ message: 'Alert rule updated successfully' });
+    } else {
+      res.status(404).json({ error: 'Alert rule not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: `Failed to update alert rule: ${error}` });
+  }
+});
+
+app.delete('/alerts/rules/:ruleId', async (req, res) => {
+  try {
+    const { ruleId } = req.params;
+    const alertingSystem = errorHandler.getAlertingSystem();
+    
+    const success = alertingSystem.removeRule(ruleId);
+    if (success) {
+      res.json({ message: 'Alert rule removed successfully' });
+    } else {
+      res.status(404).json({ error: 'Alert rule not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: `Failed to remove alert rule: ${error}` });
+  }
+});
+
+app.post('/alerts/:alertId/resolve', async (req, res) => {
+  try {
+    const { alertId } = req.params;
+    const alertingSystem = errorHandler.getAlertingSystem();
+    
+    const success = alertingSystem.resolveAlert(alertId);
+    if (success) {
+      res.json({ message: 'Alert resolved successfully' });
+    } else {
+      res.status(404).json({ error: 'Alert not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: `Failed to resolve alert: ${error}` });
+  }
+});
+
+app.get('/alerts/stats', async (req, res) => {
+  try {
+    const alertingSystem = errorHandler.getAlertingSystem();
+    const stats = alertingSystem.getAlertingStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: `Failed to get alerting stats: ${error}` });
   }
 });
 
@@ -568,8 +770,14 @@ async function gracefulShutdown(signal: string) {
   console.log(`Received ${signal}, shutting down gracefully`);
   
   try {
+    // Stop retry processor
+    await retryProcessor.stop();
+    
     // Stop polling services
     pollingService.stopAll();
+    
+    // Shutdown error handler (disconnects retry storage)
+    await errorHandler.shutdown();
     
     // Disconnect Kafka
     await kafkaProducer.disconnect();
@@ -590,6 +798,10 @@ async function startServer() {
   try {
     // Initialize Kafka first
     await initializeKafka();
+    
+    // Start retry processor
+    await retryProcessor.start();
+    console.log('Retry processor started successfully');
     
     // Start the HTTP server
     app.listen(PORT, () => {
@@ -613,6 +825,19 @@ async function startServer() {
       console.log('  - GET /communication/code-review/:platform/:repository/pull-requests/:prId/comments - Extract code review comments');
       console.log('  - POST /communication/code-review/extract - Extract all code review comments');
       console.log('  - POST /telemetry - IDE telemetry ingestion endpoint');
+      console.log('  - GET /retry/stats - Retry system statistics');
+      console.log('  - GET /retry/dead-letter - Dead letter jobs');
+      console.log('  - POST /retry/reprocess/:jobId - Reprocess dead letter job');
+      console.log('  - POST /retry/cleanup - Cleanup expired retry jobs');
+      console.log('  - GET /metrics/summary - Error metrics summary');
+      console.log('  - GET /metrics - Prometheus metrics');
+      console.log('  - GET /alerts/active - Active alerts');
+      console.log('  - GET /alerts/rules - Alert rules');
+      console.log('  - POST /alerts/rules - Add alert rule');
+      console.log('  - PUT /alerts/rules/:ruleId - Update alert rule');
+      console.log('  - DELETE /alerts/rules/:ruleId - Remove alert rule');
+      console.log('  - POST /alerts/:alertId/resolve - Resolve alert');
+      console.log('  - GET /alerts/stats - Alerting statistics');
     });
   } catch (error) {
     console.error('Failed to start server:', error);

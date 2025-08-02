@@ -4,12 +4,16 @@ import { PrivacyManager } from './privacy/privacyManager';
 import { FocusTracker } from './tracking/focusTracker';
 import { FileChangeTracker } from './tracking/fileChangeTracker';
 import { BuildTracker } from './tracking/buildTracker';
+import { ProductivitySidebarProvider } from './views/productivitySidebar';
+import { InsightNotificationManager } from './notifications/insightNotificationManager';
 
 let telemetryManager: TelemetryManager;
 let privacyManager: PrivacyManager;
 let focusTracker: FocusTracker;
 let fileChangeTracker: FileChangeTracker;
 let buildTracker: BuildTracker;
+let sidebarProvider: ProductivitySidebarProvider;
+let notificationManager: InsightNotificationManager;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('DevFlow Intelligence extension is now active');
@@ -22,6 +26,18 @@ export function activate(context: vscode.ExtensionContext) {
     focusTracker = new FocusTracker(telemetryManager);
     fileChangeTracker = new FileChangeTracker(telemetryManager);
     buildTracker = new BuildTracker(telemetryManager);
+
+    // Initialize productivity sidebar
+    sidebarProvider = new ProductivitySidebarProvider(context);
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(
+            ProductivitySidebarProvider.viewType,
+            sidebarProvider
+        )
+    );
+
+    // Initialize notification manager
+    notificationManager = new InsightNotificationManager(context);
 
     // Register commands
     registerCommands(context);
@@ -48,6 +64,12 @@ export function deactivate() {
     }
     if (buildTracker) {
         buildTracker.dispose();
+    }
+    if (sidebarProvider) {
+        sidebarProvider.dispose();
+    }
+    if (notificationManager) {
+        notificationManager.dispose();
     }
 }
 

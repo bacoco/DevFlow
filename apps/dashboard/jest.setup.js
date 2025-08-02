@@ -17,3 +17,6 @@ global.localStorage = localStorageMock;
 // Mock CSS imports
 jest.mock('react-grid-layout/css/styles.css', () => ({}));
 jest.mock('react-grid-layout/css/resizable.css', () => ({}));
+
+// Mock Three.js and React Three Fiber for testing
+// These mocks will be overridden in individual test files as needed
