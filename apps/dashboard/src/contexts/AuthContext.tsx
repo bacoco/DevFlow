@@ -57,7 +57,7 @@ const authReducer = (state: AuthState, action: AuthAction): AuthState => {
       };
     case 'AUTH_SUCCESS':
       // Update websocket token when authentication succeeds
-      if (typeof window !== 'undefined') {
+      if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'development') {
         websocketService.updateToken(action.payload.token);
       }
       return {
@@ -79,7 +79,7 @@ const authReducer = (state: AuthState, action: AuthAction): AuthState => {
       };
     case 'LOGOUT':
       // Clear websocket token when logging out
-      if (typeof window !== 'undefined') {
+      if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'development') {
         websocketService.updateToken(undefined);
       }
       return {
@@ -125,6 +125,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Initialize auth state on mount
   useEffect(() => {
     const initializeAuth = async () => {
+      // Development mode: Check for demo user in localStorage
+      if (process.env.NODE_ENV === 'development') {
+        const demoUser = localStorage.getItem('devflow_demo_user');
+        if (demoUser) {
+          const user = JSON.parse(demoUser);
+          const token = 'demo-token-' + Date.now();
+          dispatch({ type: 'AUTH_SUCCESS', payload: { user, token } });
+          return;
+        }
+      }
+
       try {
         const token = authService.getStoredToken();
         if (token) {
@@ -150,6 +161,58 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     dispatch({ type: 'AUTH_START' });
     
     try {
+      // Development mode: Use demo credentials
+      if (process.env.NODE_ENV === 'development') {
+        // Demo credentials
+        const demoCredentials = [
+          { email: 'loic@loic.fr', password: 'loic', role: 'ADMIN' },
+          { email: 'admin@loic.fr', password: 'loic', role: 'ADMIN' },
+          { email: 'manager@loic.fr', password: 'loic', role: 'MANAGER' },
+          { email: 'lead@loic.fr', password: 'loic', role: 'TEAM_LEAD' },
+          { email: 'dev@loic.fr', password: 'loic', role: 'DEVELOPER' },
+        ];
+
+        const matchedUser = demoCredentials.find(
+          cred => cred.email === credentials.email && cred.password === credentials.password
+        );
+
+        if (matchedUser) {
+          const user: User = {
+            id: 'loic-user-' + matchedUser.role.toLowerCase(),
+            email: matchedUser.email,
+            name: 'Loic (' + matchedUser.role.charAt(0) + matchedUser.role.slice(1).toLowerCase() + ')',
+            role: matchedUser.role as UserRole,
+            teamIds: ['team-1', 'team-2'],
+            preferences: {
+              theme: 'dark',
+              notifications: {
+                email: true,
+                push: true,
+                inApp: true,
+              },
+              dashboard: {
+                defaultView: 'overview',
+                refreshInterval: 30,
+              },
+            },
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          };
+
+          const token = 'demo-token-' + Date.now();
+          
+          // Store demo user for persistence
+          localStorage.setItem('devflow_demo_user', JSON.stringify(user));
+          authService.storeToken(token);
+          
+          dispatch({ type: 'AUTH_SUCCESS', payload: { user, token } });
+          return;
+        } else {
+          throw new Error('Invalid credentials. Try: loic@loic.fr / loic');
+        }
+      }
+
+      // Production mode: Use real API
       const { user, token } = await authService.login(credentials);
       authService.storeToken(token);
       dispatch({ type: 'AUTH_SUCCESS', payload: { user, token } });
@@ -178,6 +241,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Logout function
   const logout = (): void => {
     authService.clearStoredToken();
+    // Clear demo user in development mode
+    if (process.env.NODE_ENV === 'development') {
+      localStorage.removeItem('devflow_demo_user');
+    }
     dispatch({ type: 'LOGOUT' });
   };
 

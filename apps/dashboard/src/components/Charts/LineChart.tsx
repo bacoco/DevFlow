@@ -1,212 +1,267 @@
-import React, { useEffect, useRef } from 'react';
-import * as d3 from 'd3';
-import { ChartData } from '../../types/dashboard';
-import { useAccessibility } from '../../contexts/AccessibilityContext';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { motion } from 'framer-motion';
+import {
+  LineChart as RechartsLineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  ResponsiveContainer,
+  Brush,
+  ReferenceLine,
+} from 'recharts';
+import { ChartContainer } from './ChartContainer';
+import { ChartTooltip } from './ChartTooltip';
+import { ChartLegend } from './ChartLegend';
+import { ChartZoom } from './ChartZoom';
+import { BaseChartProps, RealTimeChartProps } from './types';
 
-interface LineChartProps {
-  data: ChartData;
-  width?: number;
-  height?: number;
-  margin?: { top: number; right: number; bottom: number; left: number };
-  className?: string;
+// Default color palette
+const DEFAULT_COLORS = [
+  '#3b82f6', // blue-500
+  '#10b981', // emerald-500
+  '#f59e0b', // amber-500
+  '#ef4444', // red-500
+  '#8b5cf6', // violet-500
+  '#06b6d4', // cyan-500
+  '#84cc16', // lime-500
+  '#f97316', // orange-500
+];
+
+interface LineChartProps extends BaseChartProps, Partial<RealTimeChartProps> {
+  smooth?: boolean;
+  showDots?: boolean;
+  showGrid?: boolean;
+  showBrush?: boolean;
+  showZoom?: boolean;
+  strokeWidth?: number;
+  dotSize?: number;
+  activeDotSize?: number;
 }
 
 export const LineChart: React.FC<LineChartProps> = ({
   data,
-  width = 400,
-  height = 300,
-  margin = { top: 20, right: 30, bottom: 40, left: 50 },
-  className = ''
+  config,
+  width = '100%',
+  height = 400,
+  className = '',
+  loading = false,
+  error,
+  onDataPointClick,
+  onLegendClick,
+  onZoom,
+  onPan,
+  realTime = false,
+  updateInterval = 1000,
+  streamingData = false,
+  bufferSize = 50,
+  onDataUpdate,
+  smooth = true,
+  showDots = true,
+  showGrid = true,
+  showBrush = false,
+  showZoom = false,
+  strokeWidth = 2,
+  dotSize = 4,
+  activeDotSize = 6,
 }) => {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const { settings } = useAccessibility();
-  const chartId = `chart-${Math.random().toString(36).substr(2, 9)}`;
+  const [chartData, setChartData] = useState(data);
+  const [hiddenDatasets, setHiddenDatasets] = useState<Set<string>>(new Set());
+  const [zoomDomain, setZoomDomain] = useState<{ x?: [number, number]; y?: [number, number] }>({});
 
+  // Transform data for Recharts format
+  const transformedData = useMemo(() => {
+    if (!chartData.labels || !chartData.datasets) return [];
+
+    return chartData.labels.map((label, index) => {
+      const dataPoint: any = { name: label, index };
+      
+      chartData.datasets.forEach((dataset) => {
+        if (!hiddenDatasets.has(dataset.id)) {
+          dataPoint[dataset.id] = dataset.data[index] || 0;
+        }
+      });
+      
+      return dataPoint;
+    });
+  }, [chartData, hiddenDatasets]);
+
+  // Real-time data updates
   useEffect(() => {
-    if (!svgRef.current || !data.datasets.length) return;
+    if (!realTime && !streamingData) return;
 
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove(); // Clear previous render
+    const interval = setInterval(() => {
+      if (streamingData && onDataUpdate) {
+        // Simulate new data point
+        const newData = { ...chartData };
+        const newLabel = `Point ${newData.labels.length + 1}`;
+        
+        newData.labels = [...newData.labels.slice(-(bufferSize - 1)), newLabel];
+        newData.datasets = newData.datasets.map(dataset => ({
+          ...dataset,
+          data: [...dataset.data.slice(-(bufferSize - 1)), Math.random() * 100]
+        }));
+        
+        setChartData(newData);
+        onDataUpdate(newData);
+      }
+    }, updateInterval);
 
-    const innerWidth = width - margin.left - margin.right;
-    const innerHeight = height - margin.top - margin.bottom;
+    return () => clearInterval(interval);
+  }, [realTime, streamingData, updateInterval, bufferSize, chartData, onDataUpdate]);
 
-    // Create scales
-    const xScale = d3.scalePoint()
-      .domain(data.labels)
-      .range([0, innerWidth])
-      .padding(0.1);
+  // Update chart data when prop changes
+  useEffect(() => {
+    setChartData(data);
+  }, [data]);
 
-    const allValues = data.datasets.flatMap(dataset => dataset.data);
-    const yScale = d3.scaleLinear()
-      .domain(d3.extent(allValues) as [number, number])
-      .nice()
-      .range([innerHeight, 0]);
-
-    // Create main group
-    const g = svg.append('g')
-      .attr('transform', `translate(${margin.left},${margin.top})`);
-
-    // Add axes
-    g.append('g')
-      .attr('class', 'x-axis')
-      .attr('transform', `translate(0,${innerHeight})`)
-      .call(d3.axisBottom(xScale))
-      .selectAll('text')
-      .style('font-size', '12px')
-      .style('fill', '#6b7280');
-
-    g.append('g')
-      .attr('class', 'y-axis')
-      .call(d3.axisLeft(yScale))
-      .selectAll('text')
-      .style('font-size', '12px')
-      .style('fill', '#6b7280');
-
-    // Create line generator
-    const line = d3.line<number>()
-      .x((_, i) => xScale(data.labels[i]) || 0)
-      .y(d => yScale(d))
-      .curve(d3.curveMonotoneX);
-
-    // Add lines for each dataset
-    data.datasets.forEach((dataset, index) => {
-      const color = dataset.borderColor || d3.schemeCategory10[index % 10];
-      
-      // Add line path
-      g.append('path')
-        .datum(dataset.data)
-        .attr('fill', 'none')
-        .attr('stroke', color)
-        .attr('stroke-width', dataset.borderWidth || 2)
-        .attr('d', line)
-        .attr('class', 'line-path');
-
-      // Add dots
-      g.selectAll(`.dot-${index}`)
-        .data(dataset.data)
-        .enter().append('circle')
-        .attr('class', `dot-${index}`)
-        .attr('cx', (_, i) => xScale(data.labels[i]) || 0)
-        .attr('cy', d => yScale(d))
-        .attr('r', 4)
-        .attr('fill', color)
-        .attr('stroke', 'white')
-        .attr('stroke-width', 2)
-        .style('cursor', 'pointer')
-        .on('mouseover', function(event, d) {
-          // Tooltip on hover
-          const tooltip = d3.select('body').append('div')
-            .attr('class', 'tooltip')
-            .style('position', 'absolute')
-            .style('background', 'rgba(0, 0, 0, 0.8)')
-            .style('color', 'white')
-            .style('padding', '8px')
-            .style('border-radius', '4px')
-            .style('font-size', '12px')
-            .style('pointer-events', 'none')
-            .style('z-index', '1000');
-
-          tooltip.html(`${dataset.label}: ${d}`)
-            .style('left', (event.pageX + 10) + 'px')
-            .style('top', (event.pageY - 10) + 'px');
-        })
-        .on('mouseout', function() {
-          d3.selectAll('.tooltip').remove();
-        });
+  const handleLegendClick = useCallback((dataKey: string, entry: any) => {
+    setHiddenDatasets(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(dataKey)) {
+        newSet.delete(dataKey);
+      } else {
+        newSet.add(dataKey);
+      }
+      return newSet;
     });
-
-    // Add legend
-    const legend = g.append('g')
-      .attr('class', 'legend')
-      .attr('transform', `translate(${innerWidth - 100}, 20)`);
-
-    data.datasets.forEach((dataset, index) => {
-      const legendItem = legend.append('g')
-        .attr('transform', `translate(0, ${index * 20})`);
-
-      legendItem.append('rect')
-        .attr('width', 12)
-        .attr('height', 2)
-        .attr('fill', dataset.borderColor || d3.schemeCategory10[index % 10]);
-
-      legendItem.append('text')
-        .attr('x', 16)
-        .attr('y', 0)
-        .attr('dy', '0.35em')
-        .style('font-size', '12px')
-        .style('fill', '#374151')
-        .text(dataset.label);
-    });
-
-  }, [data, width, height, margin]);
-
-  const generateChartDescription = () => {
-    const datasetDescriptions = data.datasets.map(dataset => {
-      const values = dataset.data;
-      const min = Math.min(...values);
-      const max = Math.max(...values);
-      const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
-      
-      return `${dataset.label}: ranges from ${min} to ${max}, with an average of ${avg.toFixed(2)}`;
-    }).join('. ');
     
-    return `Line chart with ${data.labels.length} data points. ${datasetDescriptions}`;
-  };
+    onLegendClick?.(chartData.datasets.findIndex(d => d.id === dataKey), entry);
+  }, [chartData.datasets, onLegendClick]);
 
-  const generateDataTable = () => {
-    return (
-      <table className="chart-table" aria-label="Chart data table">
-        <thead>
-          <tr>
-            <th scope="col">Time Period</th>
-            {data.datasets.map((dataset, index) => (
-              <th key={index} scope="col">{dataset.label}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.labels.map((label, index) => (
-            <tr key={index}>
-              <th scope="row">{label}</th>
-              {data.datasets.map((dataset, datasetIndex) => (
-                <td key={datasetIndex}>{dataset.data[index]}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    );
-  };
+  const handleZoom = useCallback((domain: { x: [number, number]; y: [number, number] }) => {
+    setZoomDomain(domain);
+    onZoom?.(domain);
+  }, [onZoom]);
+
+  const handleZoomReset = useCallback(() => {
+    setZoomDomain({});
+    onZoom?.({ x: [0, transformedData.length - 1], y: [0, 100] });
+  }, [onZoom, transformedData.length]);
+
+  const handleDataPointClick = useCallback((data: any, index: number) => {
+    if (onDataPointClick) {
+      const datasetIndex = chartData.datasets.findIndex(d => d.id in data);
+      onDataPointClick(data, datasetIndex, index);
+    }
+  }, [onDataPointClick, chartData.datasets]);
+
+  if (error) {
+    return <ChartContainer error={error} className={className} />;
+  }
 
   return (
-    <div className={`line-chart ${className}`}>
-      <svg
-        ref={svgRef}
-        width={width}
-        height={height}
-        role="img"
-        aria-labelledby={`${chartId}-title`}
-        aria-describedby={`${chartId}-desc`}
-        tabIndex={0}
+    <ChartContainer
+      loading={loading}
+      className={className}
+      actions={
+        showZoom ? (
+          <ChartZoom
+            onZoom={handleZoom}
+            onReset={handleZoomReset}
+            enabled={true}
+          />
+        ) : undefined
+      }
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.5 }}
+        style={{ width, height }}
       >
-        <title id={`${chartId}-title`}>
-          Line Chart: {data.datasets.map(d => d.label).join(', ')}
-        </title>
-        <desc id={`${chartId}-desc`}>
-          {generateChartDescription()}
-        </desc>
-      </svg>
-      
-      {/* Data table for screen readers */}
-      {settings.screenReaderMode && generateDataTable()}
-      
-      {/* Hidden description for screen readers */}
-      <div className="sr-only" aria-live="polite">
-        {generateChartDescription()}
-      </div>
-    </div>
+        <ResponsiveContainer width="100%" height="100%">
+          <RechartsLineChart
+            data={transformedData}
+            margin={{
+              top: 20,
+              right: 30,
+              left: 20,
+              bottom: showBrush ? 60 : 20,
+            }}
+            onClick={handleDataPointClick}
+          >
+            {showGrid && (
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="currentColor"
+                className="text-gray-200 dark:text-gray-700"
+              />
+            )}
+            
+            <XAxis
+              dataKey="name"
+              tick={{ fontSize: 12 }}
+              className="text-gray-600 dark:text-gray-400"
+              axisLine={{ stroke: 'currentColor' }}
+              tickLine={{ stroke: 'currentColor' }}
+              domain={zoomDomain.x}
+            />
+            
+            <YAxis
+              tick={{ fontSize: 12 }}
+              className="text-gray-600 dark:text-gray-400"
+              axisLine={{ stroke: 'currentColor' }}
+              tickLine={{ stroke: 'currentColor' }}
+              domain={zoomDomain.y}
+            />
+            
+            <ChartTooltip
+              content={({ active, payload, label }) => (
+                <ChartTooltip
+                  active={active}
+                  payload={payload}
+                  label={label}
+                  formatter={(value, name) => [
+                    typeof value === 'number' ? value.toLocaleString() : value,
+                    chartData.datasets.find(d => d.id === name)?.label || name
+                  ]}
+                />
+              )}
+            />
+
+            {chartData.datasets.map((dataset, index) => (
+              <Line
+                key={dataset.id}
+                type={smooth ? "monotone" : "linear"}
+                dataKey={dataset.id}
+                stroke={dataset.color || DEFAULT_COLORS[index % DEFAULT_COLORS.length]}
+                strokeWidth={strokeWidth}
+                dot={showDots ? { r: dotSize, strokeWidth: 0 } : false}
+                activeDot={{ 
+                  r: activeDotSize, 
+                  strokeWidth: 0,
+                  className: "drop-shadow-lg"
+                }}
+                animationDuration={800}
+                animationEasing="ease-out"
+                connectNulls={false}
+                hide={hiddenDatasets.has(dataset.id)}
+              />
+            ))}
+
+            {showBrush && (
+              <Brush
+                dataKey="name"
+                height={30}
+                stroke="currentColor"
+                className="text-gray-400"
+              />
+            )}
+          </RechartsLineChart>
+        </ResponsiveContainer>
+      </motion.div>
+
+      <ChartLegend
+        payload={chartData.datasets.map((dataset, index) => ({
+          value: dataset.label,
+          type: 'line',
+          color: dataset.color || DEFAULT_COLORS[index % DEFAULT_COLORS.length],
+          dataKey: dataset.id,
+        }))}
+        onLegendClick={handleLegendClick}
+        iconType="line"
+      />
+    </ChartContainer>
   );
 };
-
-export default LineChart;

@@ -178,7 +178,7 @@ npm run launch:monitor
 
 ### Port Conflicts
 - **Detection**: `EADDRINUSE` errors or port-related failures
-- **Fix**: Kills processes using required ports (3000-3004, 27017, 6379, 8086, 9092, 2181)
+- **Fix**: Kills processes using required ports (3000-3010, 27017, 6379, 8086, 9092, 2181)
 - **Recovery**: Waits and retries service startup
 
 ### Service Failures

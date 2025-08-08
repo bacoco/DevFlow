@@ -12,20 +12,45 @@
 }
 
 /* Skip links */
-.skip-link {
+.skip-links-enabled .skip-link {
   position: absolute;
   top: -40px;
   left: 6px;
   background: #000;
   color: #fff;
-  padding: 8px;
+  padding: 8px 12px;
   text-decoration: none;
   z-index: 1000;
   border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  border: 2px solid transparent;
+  transition: all 0.2s ease-in-out;
 }
 
-.skip-link:focus {
+.skip-links-enabled .skip-link:focus {
   top: 6px;
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+.skip-links-enabled.high-contrast .skip-link {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 2px solid var(--border-color);
+}
+
+.skip-links-enabled.high-contrast .skip-link:focus {
+  outline: 3px solid var(--focus-color);
+  box-shadow: 0 0 0 1px var(--focus-color);
+}
+
+/* Skip link container */
+.skip-links-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1000;
 }
 
 /* High contrast mode */
@@ -146,14 +171,28 @@
 }
 
 /* Focus indicators */
-*:focus {
+.focus-indicators-enabled *:focus {
   outline: 2px solid #3b82f6;
   outline-offset: 2px;
 }
 
-.high-contrast *:focus {
+.focus-indicators-enabled.high-contrast *:focus {
   outline: 3px solid var(--focus-color);
   outline-offset: 2px;
+  box-shadow: 0 0 0 1px var(--focus-color);
+}
+
+/* Enhanced focus indicators for keyboard navigation */
+.keyboard-navigation-enabled *:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.keyboard-navigation-enabled.high-contrast *:focus-visible {
+  outline: 3px solid var(--focus-color);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px var(--focus-color);
 }
 
 /* Screen reader mode enhancements */

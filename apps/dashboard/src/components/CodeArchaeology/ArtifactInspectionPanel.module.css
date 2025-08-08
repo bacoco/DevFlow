@@ -210,11 +210,47 @@
 }
 
 /* Dependencies Tab Styles */
-.dependencies-tab h4 {
-  margin: 0 0 16px 0;
+.dependencies-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.dependencies-header h4 {
+  margin: 0;
   font-size: 16px;
   font-weight: 600;
   color: #333;
+}
+
+.view-toggle {
+  display: flex;
+  background: #f0f0f0;
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.toggle-btn {
+  background: none;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: #666;
+  transition: all 0.2s;
+}
+
+.toggle-btn:hover {
+  color: #333;
+}
+
+.toggle-btn.active {
+  background: white;
+  color: #1976d2;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .dependencies-list {
@@ -275,6 +311,90 @@
   font-size: 12px;
   color: #666;
   word-break: break-all;
+  flex: 1;
+}
+
+.dependency-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.action-btn {
+  background: #f0f0f0;
+  border: 1px solid #ddd;
+  color: #666;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.action-btn:hover {
+  background: #e0e0e0;
+  color: #333;
+}
+
+/* Dependency Graph Styles */
+.dependency-graph {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.dependency-graph-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.dependency-graph-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+}
+
+.dependency-graph-empty .empty-state {
+  text-align: center;
+  color: #666;
+}
+
+.dependency-graph-empty .empty-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+
+.dependency-graph-empty p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.graph-legend {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #666;
+}
+
+.legend-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
 }
 
 /* Responsive adjustments */

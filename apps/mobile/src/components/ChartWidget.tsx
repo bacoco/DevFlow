@@ -1,6 +1,6 @@
 import React, {useState, useEffect} from 'react';
-import {View, StyleSheet, Dimensions, ScrollView} from 'react-native';
-import {Card, Text, IconButton, Menu} from 'react-native-paper';
+import {View, StyleSheet, Dimensions, ScrollView, Modal} from 'react-native';
+import {Card, Text, IconButton, Menu, Button, Portal} from 'react-native-paper';
 import {LineChart, BarChart, PieChart} from 'react-native-chart-kit';
 import {theme} from '@/theme';
 
@@ -27,6 +27,8 @@ export const ChartWidget: React.FC<ChartWidgetProps> = ({
   const [menuVisible, setMenuVisible] = useState(false);
   const [chartType, setChartType] = useState(config.type);
   const [isLandscape, setIsLandscape] = useState(false);
+  const [selectedDataPoint, setSelectedDataPoint] = useState<any>(null);
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
 
   useEffect(() => {
     const updateLayout = () => {
@@ -140,12 +142,78 @@ export const ChartWidget: React.FC<ChartWidgetProps> = ({
 
   const handleDataPointClick = (data: any) => {
     console.log('Data point clicked:', data);
-    // TODO: Show detailed view or tooltip
+    setSelectedDataPoint(data);
+    setDetailModalVisible(true);
   };
 
   const handleChartTypeChange = (type: 'line' | 'bar' | 'pie') => {
     setChartType(type);
     setMenuVisible(false);
+  };
+
+  const renderDataPointDetail = () => {
+    if (!selectedDataPoint) return null;
+
+    return (
+      <Portal>
+        <Modal
+          visible={detailModalVisible}
+          onDismiss={() => setDetailModalVisible(false)}
+          contentContainerStyle={styles.modalContainer}>
+          <Card style={styles.detailCard}>
+            <Card.Title title="Data Point Details" />
+            <Card.Content>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Value:</Text>
+                <Text style={styles.detailValue}>
+                  {selectedDataPoint.value || selectedDataPoint.y || 'N/A'}
+                </Text>
+              </View>
+              
+              {selectedDataPoint.x !== undefined && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>X-Axis:</Text>
+                  <Text style={styles.detailValue}>{selectedDataPoint.x}</Text>
+                </View>
+              )}
+              
+              {selectedDataPoint.label && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Label:</Text>
+                  <Text style={styles.detailValue}>{selectedDataPoint.label}</Text>
+                </View>
+              )}
+              
+              {selectedDataPoint.dataset && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Dataset:</Text>
+                  <Text style={styles.detailValue}>{selectedDataPoint.dataset.label}</Text>
+                </View>
+              )}
+              
+              {selectedDataPoint.index !== undefined && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Index:</Text>
+                  <Text style={styles.detailValue}>{selectedDataPoint.index}</Text>
+                </View>
+              )}
+              
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Timestamp:</Text>
+                <Text style={styles.detailValue}>
+                  {new Date().toLocaleString()}
+                </Text>
+              </View>
+            </Card.Content>
+            <Card.Actions>
+              <Button onPress={() => setDetailModalVisible(false)}>
+                Close
+              </Button>
+            </Card.Actions>
+          </Card>
+        </Modal>
+      </Portal>
+    );
   };
 
   const ChartContent = () => (
@@ -164,52 +232,56 @@ export const ChartWidget: React.FC<ChartWidgetProps> = ({
   );
 
   return (
-    <Card style={styles.card}>
-      <Card.Content>
-        <View style={styles.header}>
-          <Text style={styles.title} numberOfLines={isLandscape ? 1 : 2}>
-            {title}
-          </Text>
-          
-          {config.interactive && (
-            <Menu
-              visible={menuVisible}
-              onDismiss={() => setMenuVisible(false)}
-              anchor={
-                <IconButton
-                  icon="dots-vertical"
-                  size={20}
-                  onPress={() => setMenuVisible(true)}
+    <>
+      <Card style={styles.card}>
+        <Card.Content>
+          <View style={styles.header}>
+            <Text style={styles.title} numberOfLines={isLandscape ? 1 : 2}>
+              {title}
+            </Text>
+            
+            {config.interactive && (
+              <Menu
+                visible={menuVisible}
+                onDismiss={() => setMenuVisible(false)}
+                anchor={
+                  <IconButton
+                    icon="dots-vertical"
+                    size={20}
+                    onPress={() => setMenuVisible(true)}
+                  />
+                }>
+                <Menu.Item
+                  onPress={() => handleChartTypeChange('line')}
+                  title="Line Chart"
+                  leadingIcon="chart-line"
                 />
-              }>
-              <Menu.Item
-                onPress={() => handleChartTypeChange('line')}
-                title="Line Chart"
-                leadingIcon="chart-line"
-              />
-              <Menu.Item
-                onPress={() => handleChartTypeChange('bar')}
-                title="Bar Chart"
-                leadingIcon="chart-bar"
-              />
-              <Menu.Item
-                onPress={() => handleChartTypeChange('pie')}
-                title="Pie Chart"
-                leadingIcon="chart-pie"
-              />
-            </Menu>
+                <Menu.Item
+                  onPress={() => handleChartTypeChange('bar')}
+                  title="Bar Chart"
+                  leadingIcon="chart-bar"
+                />
+                <Menu.Item
+                  onPress={() => handleChartTypeChange('pie')}
+                  title="Pie Chart"
+                  leadingIcon="chart-pie"
+                />
+              </Menu>
+            )}
+          </View>
+          
+          <ChartContent />
+          
+          {config.zoomable && (
+            <Text style={styles.zoomHint}>
+              Swipe horizontally to explore data
+            </Text>
           )}
-        </View>
-        
-        <ChartContent />
-        
-        {config.zoomable && (
-          <Text style={styles.zoomHint}>
-            Swipe horizontally to explore data
-          </Text>
-        )}
-      </Card.Content>
-    </Card>
+        </Card.Content>
+      </Card>
+      
+      {renderDataPointDetail()}
+    </>
   );
 };
 
@@ -253,5 +325,38 @@ const styles = StyleSheet.create({
     opacity: 0.6,
     textAlign: 'center',
     marginTop: theme.spacing.sm,
+  },
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    padding: theme.spacing.lg,
+  },
+  detailCard: {
+    width: '100%',
+    maxWidth: 400,
+    maxHeight: '80%',
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: theme.spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.disabled,
+    borderBottomOpacity: 0.2,
+  },
+  detailLabel: {
+    fontSize: theme.typography.body.fontSize,
+    fontWeight: '600',
+    color: theme.colors.text,
+    flex: 1,
+  },
+  detailValue: {
+    fontSize: theme.typography.body.fontSize,
+    color: theme.colors.text,
+    flex: 2,
+    textAlign: 'right',
   },
 });

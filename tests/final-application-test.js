@@ -30,7 +30,7 @@ class DevFlowTester extends EventEmitter {
       { name: 'Data Ingestion', url: 'http://localhost:3001/health', port: 3001, critical: true },
       { name: 'Stream Processing', url: 'http://localhost:3002/health', port: 3002, critical: false },
       { name: 'ML Pipeline', url: 'http://localhost:3003/health', port: 3003, critical: false },
-      { name: 'Dashboard', url: 'http://localhost:3004', port: 3004, critical: true }
+      { name: 'Dashboard', url: 'http://localhost:3010', port: 3010, critical: true }
     ];
     
     this.infrastructure = [
@@ -374,7 +374,7 @@ class DevFlowTester extends EventEmitter {
   async fixPortConflicts() {
     console.log('🔧 Fixing port conflicts...');
     
-    const ports = [3000, 3001, 3002, 3003, 3004, 27017, 6379, 8086, 9092, 2181];
+    const ports = [3000, 3001, 3002, 3003, 3010, 27017, 6379, 8086, 9092, 2181];
     
     for (const port of ports) {
       try {

@@ -1,23 +1,23 @@
 {
   "infrastructure": {
     "MongoDB": {
-      "status": "RUNNING",
+      "status": "DOWN",
       "port": 27017
     },
     "InfluxDB": {
-      "status": "RUNNING",
+      "status": "DOWN",
       "port": 8086
     },
     "Redis": {
-      "status": "RUNNING",
+      "status": "DOWN",
       "port": 6379
     },
     "Kafka": {
-      "status": "RUNNING",
+      "status": "DOWN",
       "port": 9092
     },
     "Zookeeper": {
-      "status": "RUNNING",
+      "status": "DOWN",
       "port": 2181
     }
   },
@@ -30,22 +30,22 @@
     "Data Ingestion": {
       "status": "HEALTHY",
       "statusCode": 200,
-      "responseTime": 3
+      "responseTime": 5
     },
     "Stream Processing": {
       "status": "HEALTHY",
       "statusCode": 200,
-      "responseTime": 2
+      "responseTime": 3
     },
     "ML Pipeline": {
-      "status": "HEALTHY",
-      "statusCode": 200,
-      "responseTime": 4
+      "status": "UNHEALTHY",
+      "statusCode": 503,
+      "responseTime": 25
     },
     "Dashboard": {
       "status": "HEALTHY",
       "statusCode": 200,
-      "responseTime": 3
+      "responseTime": 5
     }
   },
   "integration": {
@@ -55,7 +55,7 @@
     },
     "websocket": {
       "status": "FAILED",
-      "error": "Unexpected server response: 404"
+      "error": "Unexpected server response: 200"
     },
     "dataFlow": {
       "status": "WORKING"
@@ -63,6 +63,6 @@
   },
   "errors": [],
   "fixes": [],
-  "timestamp": "2025-07-30T13:38:55.801Z",
-  "runCount": 46
+  "timestamp": "2025-08-08T09:54:26.295Z",
+  "runCount": 5710
 }

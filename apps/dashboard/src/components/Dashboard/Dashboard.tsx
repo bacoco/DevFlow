@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Layout } from 'react-grid-layout';
+import { Layout, Responsive, WidthProvider } from 'react-grid-layout';
 import { DashboardGrid } from '../Layout/DashboardGrid';
+
+const ResponsiveGridLayout = WidthProvider(Responsive);
 import { Widget, Dashboard as DashboardType, WidgetConfig, WidgetData } from '../../types/dashboard';
 import { WidgetSelector } from '../Widget/WidgetSelector';
 import { WidgetConfigModal } from '../Widget/WidgetConfigModal';
@@ -356,18 +358,102 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       )}
 
-      {/* Dashboard Grid */}
-      <DashboardGrid
-        widgets={widgets}
-        layouts={layouts}
-        onLayoutChange={handleLayoutChange}
-        onWidgetRefresh={handleWidgetRefresh}
-        onWidgetConfigure={handleWidgetConfigure}
-        onWidgetRemove={handleWidgetRemove}
-        onWidgetDataUpdate={handleWidgetDataUpdate}
-        isEditable={isEditing}
-        className="min-h-screen"
-      />
+      {/* Simplified Dashboard Grid - Direct Implementation */}
+      <div className="dashboard-grid-container">
+        <ResponsiveGridLayout
+          className="layout"
+          layouts={layouts}
+          breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
+          cols={{ lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 }}
+          rowHeight={60}
+          margin={[16, 16]}
+          containerPadding={[16, 16]}
+          onLayoutChange={handleLayoutChange}
+          isDraggable={isEditing}
+          isResizable={isEditing}
+          compactType="vertical"
+          preventCollision={false}
+          useCSSTransforms={true}
+          autoSize={true}
+          verticalCompact={true}
+        >
+          {widgets.map((widget) => (
+            <div key={widget.id} className="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-gray-900">{widget.title}</h3>
+                  <div className="flex items-center space-x-1">
+                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <span className="text-xs text-green-600 font-medium">LIVE</span>
+                  </div>
+                </div>
+              </div>
+              <div className="p-4 h-full">
+                {widget.type === 'metric_card' && (
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-gray-900 mb-2">
+                      {widget.data?.summary?.current || 0}
+                      {widget.title.includes('Score') ? '%' : widget.title.includes('Time') ? 'h' : ''}
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      {widget.data?.summary?.trend === 'up' ? '↗️' : widget.data?.summary?.trend === 'down' ? '↘️' : '➡️'} 
+                      {widget.data?.summary?.changePercent?.toFixed(1)}% vs previous
+                    </div>
+                  </div>
+                )}
+                {widget.type === 'line_chart' && (
+                  <div className="text-center">
+                    <div className="text-lg font-semibold mb-4">Weekly Trend</div>
+                    <div className="h-32 bg-gradient-to-r from-blue-100 to-blue-200 rounded flex items-center justify-center">
+                      📈 Chart Visualization
+                    </div>
+                  </div>
+                )}
+                {widget.type === 'activity_feed' && (
+                  <div className="space-y-3">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                      <div className="text-sm">
+                        <span className="font-medium">John Doe</span> committed to main branch
+                      </div>
+                      <div className="text-xs text-gray-500">2m ago</div>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                      <div className="text-sm">
+                        <span className="font-medium">Jane Smith</span> opened a pull request
+                      </div>
+                      <div className="text-xs text-gray-500">5m ago</div>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
+                      <div className="text-sm">
+                        <span className="font-medium">Build #123</span> completed successfully
+                      </div>
+                      <div className="text-xs text-gray-500">10m ago</div>
+                    </div>
+                  </div>
+                )}
+                {widget.type === 'flow_state' && (
+                  <div className="text-center">
+                    <div className="text-4xl mb-4">🧘</div>
+                    <div className="text-2xl font-bold text-blue-600 mb-2">
+                      {widget.data?.summary?.current || 0}%
+                    </div>
+                    <div className="text-sm text-gray-600">Flow State</div>
+                    <div className="w-full bg-gray-200 rounded-full h-2 mt-4">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${widget.data?.summary?.current || 0}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </ResponsiveGridLayout>
+      </div>
 
       {/* Empty State */}
       {widgets.length === 0 && (

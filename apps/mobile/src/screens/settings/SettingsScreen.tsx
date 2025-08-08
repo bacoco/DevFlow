@@ -1,6 +1,6 @@
-import React from 'react';
-import {View, StyleSheet, ScrollView} from 'react-native';
-import {Text, Card, Switch, List, Divider, SegmentedButtons} from 'react-native-paper';
+import React, {useState} from 'react';
+import {View, StyleSheet, ScrollView, Modal} from 'react-native';
+import {Text, Card, Switch, List, Divider, SegmentedButtons, Button, Portal, RadioButton} from 'react-native-paper';
 import {useSelector, useDispatch} from 'react-redux';
 
 import {RootState, AppDispatch} from '@/store';
@@ -14,6 +14,7 @@ import {theme} from '@/theme';
 export const SettingsScreen: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
   const {notifications, privacy, display} = useSelector((state: RootState) => state.settings);
+  const [refreshIntervalModalVisible, setRefreshIntervalModalVisible] = useState(false);
 
   const handleNotificationToggle = (key: keyof typeof notifications, value: boolean) => {
     dispatch(updateNotificationSettings({[key]: value}));
@@ -46,8 +47,55 @@ export const SettingsScreen: React.FC = () => {
     {value: 'critical', label: 'Critical'},
   ];
 
+  const refreshIntervalOptions = [
+    {value: 10, label: '10 seconds'},
+    {value: 30, label: '30 seconds'},
+    {value: 60, label: '1 minute'},
+    {value: 300, label: '5 minutes'},
+    {value: 600, label: '10 minutes'},
+    {value: 1800, label: '30 minutes'},
+  ];
+
+  const handleRefreshIntervalChange = (value: number) => {
+    handleDisplaySetting('refreshInterval', value);
+    setRefreshIntervalModalVisible(false);
+  };
+
+  const renderRefreshIntervalModal = () => (
+    <Portal>
+      <Modal
+        visible={refreshIntervalModalVisible}
+        onDismiss={() => setRefreshIntervalModalVisible(false)}
+        contentContainerStyle={styles.modalContainer}>
+        <Card style={styles.modalCard}>
+          <Card.Title title="Auto Refresh Interval" />
+          <Card.Content>
+            <RadioButton.Group
+              onValueChange={(value) => handleRefreshIntervalChange(parseInt(value))}
+              value={display.refreshInterval.toString()}>
+              {refreshIntervalOptions.map((option) => (
+                <RadioButton.Item
+                  key={option.value}
+                  label={option.label}
+                  value={option.value.toString()}
+                  style={styles.radioItem}
+                />
+              ))}
+            </RadioButton.Group>
+          </Card.Content>
+          <Card.Actions>
+            <Button onPress={() => setRefreshIntervalModalVisible(false)}>
+              Cancel
+            </Button>
+          </Card.Actions>
+        </Card>
+      </Modal>
+    </Portal>
+  );
+
   return (
-    <ScrollView style={styles.container}>
+    <>
+      <ScrollView style={styles.container}>
       {/* Notifications Settings */}
       <Card style={styles.card}>
         <List.Section>
@@ -200,19 +248,21 @@ export const SettingsScreen: React.FC = () => {
           <List.Item
             title="Auto Refresh"
             description={`Refresh data every ${display.refreshInterval} seconds`}
-            onPress={() => {
-              // TODO: Show refresh interval picker
-            }}
+            onPress={() => setRefreshIntervalModalVisible(true)}
+            right={() => <List.Icon icon="chevron-right" />}
           />
         </List.Section>
       </Card>
 
-      <View style={styles.footer}>
-        <Text style={styles.footerText}>
-          Settings are automatically saved and synced across devices
-        </Text>
-      </View>
-    </ScrollView>
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>
+            Settings are automatically saved and synced across devices
+          </Text>
+        </View>
+      </ScrollView>
+      
+      {renderRefreshIntervalModal()}
+    </>
   );
 };
 
@@ -247,5 +297,20 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     opacity: 0.6,
     textAlign: 'center',
+  },
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    padding: theme.spacing.lg,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 400,
+    maxHeight: '80%',
+  },
+  radioItem: {
+    paddingVertical: theme.spacing.xs,
   },
 });

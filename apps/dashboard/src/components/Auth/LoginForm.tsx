@@ -187,6 +187,30 @@ export const LoginForm: React.FC<LoginFormProps> = ({
           </button>
         </form>
 
+        {/* Demo Credentials (Development Mode) */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+            <h4 className="text-sm font-medium text-blue-800 mb-2">Demo Login:</h4>
+            <div className="text-sm text-blue-700 mb-2">
+              <strong>Email:</strong> loic@loic.fr<br/>
+              <strong>Password:</strong> loic
+            </div>
+            <div className="text-xs text-blue-600 mb-2">
+              Other emails: admin@loic.fr, manager@loic.fr, lead@loic.fr, dev@loic.fr (all with password: loic)
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setFormData({ email: 'loic@loic.fr', password: 'loic' });
+              }}
+              className="text-xs text-blue-600 hover:text-blue-500 underline"
+              disabled={state.isLoading}
+            >
+              Use Loic Account
+            </button>
+          </div>
+        )}
+
         {/* Switch to Register */}
         {onSwitchToRegister && (
           <div className="mt-6 text-center">

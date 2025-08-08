@@ -133,7 +133,7 @@ services:
       context: ./apps/dashboard
       dockerfile: Dockerfile
     ports:
-      - "3004:3004"
+      - "3010:3010"
     environment:
       NODE_ENV: development
       NEXT_PUBLIC_API_URL: http://localhost:3000

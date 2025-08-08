@@ -7,8 +7,7 @@ import { RealTimeWidget } from '../Widget/RealTimeWidget';
 import { LineChart } from '../Charts/LineChart';
 import { BarChart } from '../Charts/BarChart';
 import { GripVertical } from 'lucide-react';
-import 'react-grid-layout/css/styles.css';
-import 'react-grid-layout/css/resizable.css';
+// CSS imports moved to _app.tsx to avoid global CSS import issues
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
 
@@ -200,6 +199,14 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
   const breakpoints = { lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 };
   const cols = { lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 };
 
+  // Debug logging
+  console.log('DashboardGrid render:', {
+    widgetCount: widgets.length,
+    layouts: layouts,
+    breakpoints,
+    cols
+  });
+
   return (
     <div className={`dashboard-grid ${className}`}>
       <ResponsiveGridLayout
@@ -209,7 +216,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
         cols={cols}
         rowHeight={60}
         margin={[16, 16]}
-        containerPadding={[0, 0]}
+        containerPadding={[16, 16]}
         onLayoutChange={onLayoutChange}
         isDraggable={isEditable}
         isResizable={isEditable}
@@ -217,6 +224,8 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
         preventCollision={false}
         useCSSTransforms={true}
         draggableHandle=".drag-handle"
+        autoSize={true}
+        verticalCompact={true}
       >
         {widgets.map((widget) => (
           <div key={widget.id} className="widget-container relative">

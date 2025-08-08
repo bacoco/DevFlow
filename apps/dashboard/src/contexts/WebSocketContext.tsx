@@ -1,10 +1,13 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { useWebSocket, UseWebSocketReturn } from '../hooks/useWebSocket';
+import { useRealTimeSync, UseRealTimeSyncReturn } from '../hooks/useRealTimeSync';
 
 interface WebSocketContextValue extends UseWebSocketReturn {
   reconnectAttempts: number;
   lastError: Error | null;
   isReconnecting: boolean;
+  // Real-time sync functionality
+  realTimeSync: UseRealTimeSyncReturn;
 }
 
 const WebSocketContext = createContext<WebSocketContextValue | null>(null);
@@ -13,18 +16,48 @@ export interface WebSocketProviderProps {
   children: ReactNode;
   autoConnect?: boolean;
   onConnectionChange?: (isConnected: boolean) => void;
+  // Real-time sync options
+  enableDashboardSync?: boolean;
+  enableTaskSync?: boolean;
+  enableMetricSync?: boolean;
+  enableUserActivitySync?: boolean;
+  syncFilters?: {
+    userId?: string;
+    teamId?: string;
+    dashboardId?: string;
+  };
+  onSyncError?: (error: Error) => void;
+  onConflictDetected?: (data: any) => void;
 }
 
 export function WebSocketProvider({ 
   children, 
   autoConnect = true,
-  onConnectionChange 
+  onConnectionChange,
+  enableDashboardSync = true,
+  enableTaskSync = true,
+  enableMetricSync = true,
+  enableUserActivitySync = false,
+  syncFilters = {},
+  onSyncError,
+  onConflictDetected
 }: WebSocketProviderProps) {
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const [lastError, setLastError] = useState<Error | null>(null);
   const [isReconnecting, setIsReconnecting] = useState(false);
 
-  const webSocket = useWebSocket({
+  // In development mode, use mock WebSocket that doesn't actually connect
+  const webSocket = process.env.NODE_ENV === 'development' ? {
+    isConnected: true,
+    isConnecting: false,
+    connectionState: 'connected' as const,
+    connect: () => {},
+    disconnect: () => {},
+    send: () => {},
+    subscribe: () => () => {},
+    unsubscribe: () => {},
+    getConnectionInfo: () => ({ url: 'mock://localhost', readyState: 1 })
+  } : useWebSocket({
     autoConnect,
     onConnected: () => {
       console.log('WebSocket connected');
@@ -55,11 +88,47 @@ export function WebSocketProvider({
     }
   });
 
+  // Simulate connection in development mode
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      onConnectionChange?.(true);
+    }
+  }, [onConnectionChange]);
+
+  // Real-time sync integration - mock in development
+  const realTimeSync = process.env.NODE_ENV === 'development' ? {
+    isEnabled: true,
+    isSyncing: false,
+    lastSyncTime: new Date(),
+    syncStatus: 'idle' as const,
+    enableSync: () => {},
+    disableSync: () => {},
+    forcSync: () => Promise.resolve(),
+    getSyncHistory: () => [],
+    clearSyncHistory: () => {},
+    onDataReceived: () => {},
+    onDataSent: () => {},
+    onSyncComplete: () => {},
+    onSyncError: () => {}
+  } : useRealTimeSync({
+    enableDashboardSync,
+    enableTaskSync,
+    enableMetricSync,
+    enableUserActivitySync,
+    filters: syncFilters,
+    onSyncError: (error) => {
+      setLastError(error);
+      onSyncError?.(error);
+    },
+    onConflictDetected
+  });
+
   const contextValue: WebSocketContextValue = {
     ...webSocket,
     reconnectAttempts,
     lastError,
-    isReconnecting
+    isReconnecting,
+    realTimeSync
   };
 
   return (

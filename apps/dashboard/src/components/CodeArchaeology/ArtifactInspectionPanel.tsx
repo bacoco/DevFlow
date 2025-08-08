@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { CodeArtifact } from './types';
 import { CodeSnippetPreview } from './CodeSnippetPreview';
 import { ChangeHistoryTimeline } from './ChangeHistoryTimeline';
-import './ArtifactInspectionPanel.css';
+import { DependencyGraph } from './DependencyGraph';
+import styles from './ArtifactInspectionPanel.module.css';
 
 interface ArtifactInspectionPanelProps {
   artifact: CodeArtifact | null;
@@ -54,6 +55,7 @@ const ArtifactInspectionPanel: React.FC<ArtifactInspectionPanelProps> = ({
   const [activeTab, setActiveTab] = useState<'overview' | 'code' | 'history' | 'dependencies'>('overview');
   const [artifactDetails, setArtifactDetails] = useState<ArtifactDetails | null>(null);
   const [loading, setLoading] = useState(false);
+  const [activeView, setActiveView] = useState<'list' | 'graph'>('list');
 
   // Load detailed artifact information when artifact changes
   useEffect(() => {
@@ -200,6 +202,12 @@ const ArtifactInspectionPanel: React.FC<ArtifactInspectionPanelProps> = ({
     return '#F44336'; // Red
   };
 
+  const handleDependencyClick = (dependency: DependencyInfo) => {
+    // In a real implementation, this would navigate to the dependency
+    console.log('Navigate to dependency:', dependency);
+    // Could emit an event to parent component to navigate to the dependency
+  };
+
   if (!isVisible || !artifact) {
     return null;
   }
@@ -320,18 +328,54 @@ const ArtifactInspectionPanel: React.FC<ArtifactInspectionPanelProps> = ({
 
             {activeTab === 'dependencies' && artifactDetails && (
               <div className="dependencies-tab">
-                <h4>Dependencies ({artifactDetails.dependencies.length})</h4>
-                <div className="dependencies-list">
-                  {artifactDetails.dependencies.map((dep) => (
-                    <div key={dep.id} className="dependency-item">
-                      <div className="dependency-header">
-                        <span className="dependency-name">{dep.name}</span>
-                        <span className={`dependency-type ${dep.type}`}>{dep.type}</span>
-                      </div>
-                      <div className="dependency-path">{dep.filePath}</div>
-                    </div>
-                  ))}
+                <div className="dependencies-header">
+                  <h4>Dependencies ({artifactDetails.dependencies.length})</h4>
+                  <div className="view-toggle">
+                    <button
+                      className={`toggle-btn ${activeView === 'list' ? 'active' : ''}`}
+                      onClick={() => setActiveView('list')}
+                    >
+                      List
+                    </button>
+                    <button
+                      className={`toggle-btn ${activeView === 'graph' ? 'active' : ''}`}
+                      onClick={() => setActiveView('graph')}
+                    >
+                      Graph
+                    </button>
+                  </div>
                 </div>
+
+                {activeView === 'list' ? (
+                  <div className="dependencies-list">
+                    {artifactDetails.dependencies.map((dep) => (
+                      <div key={dep.id} className="dependency-item">
+                        <div className="dependency-header">
+                          <span className="dependency-name">{dep.name}</span>
+                          <span className={`dependency-type ${dep.type}`}>{dep.type}</span>
+                        </div>
+                        <div className="dependency-path">{dep.filePath}</div>
+                        <div className="dependency-actions">
+                          <button
+                            className="action-btn"
+                            onClick={() => handleDependencyClick(dep)}
+                            title="Navigate to dependency"
+                          >
+                            →
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="dependency-graph">
+                    <DependencyGraph
+                      centerArtifact={artifact}
+                      dependencies={artifactDetails.dependencies}
+                      onNodeClick={handleDependencyClick}
+                    />
+                  </div>
+                )}
               </div>
             )}
           </>

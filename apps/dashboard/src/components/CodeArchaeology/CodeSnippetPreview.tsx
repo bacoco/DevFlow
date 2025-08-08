@@ -9,7 +9,7 @@ import 'prismjs/components/prism-cpp';
 import 'prismjs/components/prism-csharp';
 import 'prismjs/components/prism-go';
 import 'prismjs/components/prism-rust';
-import './CodeSnippetPreview.css';
+import styles from './CodeSnippetPreview.module.css';
 
 interface CodeSnippetPreviewProps {
   code: string;

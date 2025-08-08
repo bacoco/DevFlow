@@ -143,19 +143,114 @@ class OfflineService {
   }
 
   private async executeOfflineAction(action: OfflineAction): Promise<void> {
-    // TODO: Implement action execution based on action type
     switch (action.type) {
       case 'UPDATE_SETTINGS':
-        // Execute settings update
+        await this.executeSettingsUpdate(action.payload);
         break;
       case 'MARK_ALERT_READ':
-        // Execute alert read action
+        await this.executeMarkAlertRead(action.payload);
         break;
       case 'DISMISS_ALERT':
-        // Execute alert dismiss action
+        await this.executeDismissAlert(action.payload);
+        break;
+      case 'UPDATE_NOTIFICATION_PREFERENCES':
+        await this.executeNotificationPreferencesUpdate(action.payload);
+        break;
+      case 'SYNC_DASHBOARD_CONFIG':
+        await this.executeDashboardConfigSync(action.payload);
+        break;
+      case 'SUBMIT_FEEDBACK':
+        await this.executeSubmitFeedback(action.payload);
         break;
       default:
         console.warn('Unknown offline action type:', action.type);
+        throw new Error(`Unsupported action type: ${action.type}`);
+    }
+  }
+
+  private async executeSettingsUpdate(payload: any): Promise<void> {
+    const response = await fetch('/api/user/settings', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${await AsyncStorage.getItem('auth_token')}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Settings update failed: ${response.status}`);
+    }
+  }
+
+  private async executeMarkAlertRead(payload: {alertId: string}): Promise<void> {
+    const response = await fetch(`/api/alerts/${payload.alertId}/read`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${await AsyncStorage.getItem('auth_token')}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Mark alert read failed: ${response.status}`);
+    }
+  }
+
+  private async executeDismissAlert(payload: {alertId: string}): Promise<void> {
+    const response = await fetch(`/api/alerts/${payload.alertId}/dismiss`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${await AsyncStorage.getItem('auth_token')}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Dismiss alert failed: ${response.status}`);
+    }
+  }
+
+  private async executeNotificationPreferencesUpdate(payload: any): Promise<void> {
+    const response = await fetch('/api/user/notification-preferences', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${await AsyncStorage.getItem('auth_token')}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Notification preferences update failed: ${response.status}`);
+    }
+  }
+
+  private async executeDashboardConfigSync(payload: any): Promise<void> {
+    const response = await fetch('/api/dashboard/config', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${await AsyncStorage.getItem('auth_token')}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Dashboard config sync failed: ${response.status}`);
+    }
+  }
+
+  private async executeSubmitFeedback(payload: any): Promise<void> {
+    const response = await fetch('/api/feedback', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${await AsyncStorage.getItem('auth_token')}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Submit feedback failed: ${response.status}`);
     }
   }
 

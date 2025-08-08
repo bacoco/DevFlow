@@ -2,11 +2,13 @@ import React, {useEffect} from 'react';
 import {View, StyleSheet, FlatList, RefreshControl} from 'react-native';
 import {Text, Card, Chip, IconButton, Badge} from 'react-native-paper';
 import {useDispatch, useSelector} from 'react-redux';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {AppDispatch, RootState} from '@/store';
 import {fetchAlerts, markAsRead, dismissAlert} from '@/store/slices/alertsSlice';
 import {Alert} from '@/store/slices/alertsSlice';
 import {theme} from '@/theme';
+import {offlineService} from '@/services/offlineService';
 
 export const AlertsScreen: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
@@ -28,6 +30,121 @@ export const AlertsScreen: React.FC = () => {
 
   const handleDismiss = (alertId: string) => {
     dispatch(dismissAlert(alertId));
+  };
+
+  const handleActionExecution = async (alertId: string, action: any) => {
+    try {
+      switch (action.type) {
+        case 'acknowledge':
+          await executeAcknowledgeAction(alertId);
+          break;
+        case 'resolve':
+          await executeResolveAction(alertId, action.payload);
+          break;
+        case 'escalate':
+          await executeEscalateAction(alertId, action.payload);
+          break;
+        case 'snooze':
+          await executeSnoozeAction(alertId, action.payload);
+          break;
+        case 'view_details':
+          await executeViewDetailsAction(alertId);
+          break;
+        case 'navigate':
+          await executeNavigateAction(action.payload);
+          break;
+        default:
+          console.warn('Unknown action type:', action.type);
+      }
+    } catch (error) {
+      console.error('Failed to execute action:', error);
+      // Add to offline queue if network error
+      if (error.message.includes('network') || error.message.includes('fetch')) {
+        await offlineService.addOfflineAction({
+          type: 'EXECUTE_ALERT_ACTION',
+          payload: {alertId, action},
+        });
+      }
+    }
+  };
+
+  const executeAcknowledgeAction = async (alertId: string) => {
+    const response = await fetch(`/api/alerts/${alertId}/acknowledge`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${await AsyncStorage.getItem('auth_token')}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to acknowledge alert');
+    }
+
+    // Update local state
+    dispatch(markAsRead(alertId));
+  };
+
+  const executeResolveAction = async (alertId: string, payload?: any) => {
+    const response = await fetch(`/api/alerts/${alertId}/resolve`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${await AsyncStorage.getItem('auth_token')}`,
+      },
+      body: JSON.stringify(payload || {}),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to resolve alert');
+    }
+
+    // Remove from local state
+    dispatch(dismissAlert(alertId));
+  };
+
+  const executeEscalateAction = async (alertId: string, payload?: any) => {
+    const response = await fetch(`/api/alerts/${alertId}/escalate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${await AsyncStorage.getItem('auth_token')}`,
+      },
+      body: JSON.stringify(payload || {}),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to escalate alert');
+    }
+  };
+
+  const executeSnoozeAction = async (alertId: string, payload?: any) => {
+    const snoozeMinutes = payload?.minutes || 60;
+    const response = await fetch(`/api/alerts/${alertId}/snooze`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${await AsyncStorage.getItem('auth_token')}`,
+      },
+      body: JSON.stringify({minutes: snoozeMinutes}),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to snooze alert');
+    }
+
+    // Remove from current view
+    dispatch(dismissAlert(alertId));
+  };
+
+  const executeViewDetailsAction = async (alertId: string) => {
+    // Navigate to alert details or show modal
+    console.log('Viewing details for alert:', alertId);
+    // Implementation depends on navigation structure
+  };
+
+  const executeNavigateAction = async (payload: any) => {
+    const {navigationService} = await import('@/navigation/NavigationService');
+    navigationService.navigate(payload.screen, payload.params);
   };
 
   const getSeverityColor = (severity: Alert['severity']) => {
@@ -110,9 +227,7 @@ export const AlertsScreen: React.FC = () => {
               <Chip
                 key={action.id}
                 mode={action.type === 'primary' ? 'flat' : 'outlined'}
-                onPress={() => {
-                  // TODO: Handle action execution
-                }}
+                onPress={() => handleActionExecution(item.id, action)}
                 style={styles.actionChip}>
                 {action.label}
               </Chip>

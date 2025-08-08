@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import './ChangeHistoryTimeline.css';
+import styles from './ChangeHistoryTimeline.module.css';
 
 interface ChangeHistoryEntry {
   id: string;
