@@ -1,8 +1,15 @@
 #!/bin/bash
 
-# DevFlow Intelligence Platform - Enhanced Complete Run Script
-# Version: 2.0
-# Usage: ./run-devflow-complete.sh [start|stop|status|help|diagnostic] [--verbose] [--diagnostic]
+# DevFlow Intelligence Platform - Enhanced Complete Run Script with Comprehensive Error Handling
+# Version: 2.1
+# Usage: ./run-devflow-complete.sh [COMMAND] [OPTIONS]
+# 
+# Enhanced Error Handling Features:
+# - Detailed error messages with recovery suggestions
+# - Automatic recovery for common issues
+# - Comprehensive diagnostic mode with verbose logging
+# - Interactive troubleshooting guide
+# - Error pattern analysis and reporting
 
 set -e
 
@@ -11,7 +18,7 @@ set -e
 # =============================================================================
 
 # Script metadata
-SCRIPT_VERSION="2.0"
+SCRIPT_VERSION="2.1"
 SCRIPT_NAME="DevFlow Complete Runner"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
@@ -127,6 +134,27 @@ init_service_tracking() {
     mkdir -p "$SERVICE_STATUS_DIR"
     > "$SERVICE_PIDS_FILE"
     > "$SERVICE_START_TIME_FILE"
+    
+    # Initialize performance tracking
+    init_performance_tracking
+}
+
+# Initialize performance tracking
+init_performance_tracking() {
+    mkdir -p "$PID_DIR"
+    
+    # Initialize performance metrics files
+    > "$PERFORMANCE_METRICS_FILE"
+    > "$STARTUP_METRICS_FILE"
+    > "$RESOURCE_METRICS_FILE"
+    
+    # Create performance log if it doesn't exist
+    if [[ ! -f "$PERFORMANCE_LOG" ]]; then
+        echo "$(timestamp) [INFO] Performance monitoring initialized" > "$PERFORMANCE_LOG"
+    fi
+    
+    # Record system baseline metrics
+    record_system_baseline
 }
 
 # Service status functions
@@ -154,6 +182,588 @@ set_service_start_time() {
 get_service_start_time() {
     local service="$1"
     grep "^$service:" "$SERVICE_START_TIME_FILE" 2>/dev/null | cut -d':' -f2 | tail -1
+}
+
+# =============================================================================
+# PERFORMANCE MONITORING FUNCTIONS
+# =============================================================================
+
+# Record system baseline metrics
+record_system_baseline() {
+    local timestamp=$(date +%s)
+    local cpu_count=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "unknown")
+    local total_memory
+    
+    # Get total memory based on OS
+    if command -v free >/dev/null 2>&1; then
+        total_memory=$(free -m | awk 'NR==2{print $2}')
+    elif command -v vm_stat >/dev/null 2>&1; then
+        # macOS
+        local pages=$(vm_stat | grep "Pages free" | awk '{print $3}' | sed 's/\.//')
+        local page_size=$(vm_stat | grep "page size" | awk '{print $8}')
+        total_memory=$(( pages * page_size / 1024 / 1024 ))
+    else
+        total_memory="unknown"
+    fi
+    
+    # Record baseline
+    echo "baseline:$timestamp:cpu_count=$cpu_count:memory_mb=$total_memory" >> "$PERFORMANCE_METRICS_FILE"
+    
+    log_message "PERFORMANCE" "System baseline recorded - CPU: $cpu_count cores, Memory: ${total_memory}MB"
+}
+
+# Record service startup metrics
+record_service_startup_metrics() {
+    local service="$1"
+    local start_time="$2"
+    local end_time="$3"
+    local status="$4"
+    local attempt_count="${5:-1}"
+    
+    local duration=$((end_time - start_time))
+    local timestamp=$(date +%s)
+    
+    # Record startup metrics
+    echo "$service:$timestamp:start_time=$start_time:end_time=$end_time:duration=$duration:status=$status:attempts=$attempt_count" >> "$STARTUP_METRICS_FILE"
+    
+    # Log to performance log
+    echo "$(timestamp) [STARTUP] Service: $service, Duration: ${duration}s, Status: $status, Attempts: $attempt_count" >> "$PERFORMANCE_LOG"
+    
+    log_diagnostic "PERFORMANCE" "Service startup metrics recorded" "service=$service duration=${duration}s status=$status"
+}
+
+# Record resource usage metrics
+record_resource_metrics() {
+    local service="$1"
+    local timestamp=$(date +%s)
+    
+    # Get container stats if service is running
+    local container_name="devflow-${service}-1"
+    local actual_container=$(docker ps --format "{{.Names}}" | grep -E "${service}|${container_name}" | head -1)
+    
+    if [[ -n "$actual_container" ]]; then
+        # Get container resource usage
+        local stats=$(docker stats --no-stream --format "table {{.CPUPerc}},{{.MemUsage}},{{.NetIO}},{{.BlockIO}}" "$actual_container" 2>/dev/null | tail -1)
+        
+        if [[ -n "$stats" ]]; then
+            local cpu_percent=$(echo "$stats" | cut -d',' -f1 | sed 's/%//')
+            local memory_usage=$(echo "$stats" | cut -d',' -f2)
+            local network_io=$(echo "$stats" | cut -d',' -f3)
+            local block_io=$(echo "$stats" | cut -d',' -f4)
+            
+            # Record metrics
+            echo "$service:$timestamp:cpu_percent=$cpu_percent:memory_usage=$memory_usage:network_io=$network_io:block_io=$block_io" >> "$RESOURCE_METRICS_FILE"
+            
+            log_diagnostic "PERFORMANCE" "Resource metrics recorded" "service=$service cpu=${cpu_percent}% memory=$memory_usage"
+        fi
+    fi
+}
+
+# Get startup time statistics
+get_startup_statistics() {
+    if [[ ! -f "$STARTUP_METRICS_FILE" ]]; then
+        echo "No startup metrics available"
+        return 1
+    fi
+    
+    local total_services=0
+    local total_duration=0
+    local successful_starts=0
+    local failed_starts=0
+    local total_attempts=0
+    
+    while IFS=':' read -r service timestamp metrics; do
+        if [[ -n "$service" && "$service" != "baseline" ]]; then
+            ((total_services++))
+            
+            # Parse metrics
+            local duration=$(echo "$metrics" | grep -o 'duration=[0-9]*' | cut -d'=' -f2)
+            local status=$(echo "$metrics" | grep -o 'status=[^:]*' | cut -d'=' -f2)
+            local attempts=$(echo "$metrics" | grep -o 'attempts=[0-9]*' | cut -d'=' -f2)
+            
+            if [[ -n "$duration" ]]; then
+                total_duration=$((total_duration + duration))
+            fi
+            
+            if [[ "$status" == "healthy" ]]; then
+                ((successful_starts++))
+            else
+                ((failed_starts++))
+            fi
+            
+            if [[ -n "$attempts" ]]; then
+                total_attempts=$((total_attempts + attempts))
+            fi
+        fi
+    done < "$STARTUP_METRICS_FILE"
+    
+    if [[ $total_services -gt 0 ]]; then
+        local average_duration=$((total_duration / total_services))
+        local success_rate=$((successful_starts * 100 / total_services))
+        local average_attempts=$((total_attempts / total_services))
+        
+        echo "Total Services: $total_services"
+        echo "Successful Starts: $successful_starts"
+        echo "Failed Starts: $failed_starts"
+        echo "Success Rate: ${success_rate}%"
+        echo "Total Startup Time: ${total_duration}s"
+        echo "Average Startup Time: ${average_duration}s"
+        echo "Average Attempts per Service: $average_attempts"
+    else
+        echo "No startup statistics available"
+    fi
+}
+
+# Get current resource usage summary
+get_resource_usage_summary() {
+    local timestamp=$(date +%s)
+    local summary_file="/tmp/devflow_resource_summary_$$"
+    
+    echo "=== DevFlow Platform Resource Usage Summary ===" > "$summary_file"
+    echo "Generated: $(date)" >> "$summary_file"
+    echo "" >> "$summary_file"
+    
+    # System overview
+    echo "SYSTEM OVERVIEW:" >> "$summary_file"
+    echo "---------------" >> "$summary_file"
+    
+    # CPU information
+    local cpu_count=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "unknown")
+    echo "CPU Cores: $cpu_count" >> "$summary_file"
+    
+    # Memory information
+    if command -v free >/dev/null 2>&1; then
+        echo "Memory Usage:" >> "$summary_file"
+        free -h >> "$summary_file"
+    elif command -v vm_stat >/dev/null 2>&1; then
+        echo "Memory Usage (macOS):" >> "$summary_file"
+        vm_stat | head -10 >> "$summary_file"
+    fi
+    
+    echo "" >> "$summary_file"
+    
+    # Disk usage
+    echo "DISK USAGE:" >> "$summary_file"
+    echo "-----------" >> "$summary_file"
+    df -h . >> "$summary_file"
+    echo "" >> "$summary_file"
+    
+    # Docker system usage
+    echo "DOCKER SYSTEM USAGE:" >> "$summary_file"
+    echo "--------------------" >> "$summary_file"
+    if docker system df 2>/dev/null; then
+        docker system df >> "$summary_file"
+    else
+        echo "Docker system information not available" >> "$summary_file"
+    fi
+    echo "" >> "$summary_file"
+    
+    # Container resource usage
+    echo "CONTAINER RESOURCE USAGE:" >> "$summary_file"
+    echo "-------------------------" >> "$summary_file"
+    
+    local all_services=($INFRASTRUCTURE_SERVICES $APPLICATION_SERVICES $FRONTEND_SERVICES)
+    local running_containers=0
+    
+    for service in "${all_services[@]}"; do
+        local container_name="devflow-${service}-1"
+        local actual_container=$(docker ps --format "{{.Names}}" | grep -E "${service}|${container_name}" | head -1)
+        
+        if [[ -n "$actual_container" ]]; then
+            ((running_containers++))
+            echo "Service: $service (Container: $actual_container)" >> "$summary_file"
+            
+            # Get detailed stats
+            local stats=$(docker stats --no-stream --format "table {{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}" "$actual_container" 2>/dev/null | tail -1)
+            
+            if [[ -n "$stats" ]]; then
+                echo "  CPU: $(echo "$stats" | awk '{print $1}')" >> "$summary_file"
+                echo "  Memory: $(echo "$stats" | awk '{print $2}') ($(echo "$stats" | awk '{print $3}'))" >> "$summary_file"
+                echo "  Network I/O: $(echo "$stats" | awk '{print $4}')" >> "$summary_file"
+                echo "  Block I/O: $(echo "$stats" | awk '{print $5}')" >> "$summary_file"
+            else
+                echo "  Stats not available" >> "$summary_file"
+            fi
+            echo "" >> "$summary_file"
+            
+            # Record current metrics
+            record_resource_metrics "$service"
+        fi
+    done
+    
+    echo "Total Running Containers: $running_containers" >> "$summary_file"
+    echo "" >> "$summary_file"
+    
+    # Performance trends (if historical data exists)
+    if [[ -f "$RESOURCE_METRICS_FILE" ]] && [[ -s "$RESOURCE_METRICS_FILE" ]]; then
+        echo "RECENT PERFORMANCE TRENDS:" >> "$summary_file"
+        echo "--------------------------" >> "$summary_file"
+        
+        # Show last 5 entries for each service
+        for service in "${all_services[@]}"; do
+            local recent_metrics=$(grep "^$service:" "$RESOURCE_METRICS_FILE" | tail -5)
+            if [[ -n "$recent_metrics" ]]; then
+                echo "Recent metrics for $service:" >> "$summary_file"
+                echo "$recent_metrics" | while IFS=':' read -r svc ts metrics; do
+                    local time_readable=$(date -d "@$ts" 2>/dev/null || date -r "$ts" 2>/dev/null || echo "$ts")
+                    echo "  $time_readable: $metrics" >> "$summary_file"
+                done
+                echo "" >> "$summary_file"
+            fi
+        done
+    fi
+    
+    # Output summary
+    cat "$summary_file"
+    
+    # Save summary to performance log
+    echo "$(timestamp) [RESOURCE_SUMMARY] Resource usage summary generated" >> "$PERFORMANCE_LOG"
+    
+    # Cleanup
+    rm -f "$summary_file"
+}
+
+# Optimize startup sequence based on performance data
+optimize_startup_sequence() {
+    print_header "🚀 Startup Sequence Optimization"
+    
+    if [[ ! -f "$STARTUP_METRICS_FILE" ]] || [[ ! -s "$STARTUP_METRICS_FILE" ]]; then
+        print_warning "No startup metrics available for optimization"
+        print_info "Run the platform a few times to collect performance data"
+        return 1
+    fi
+    
+    print_status "Analyzing startup performance data..."
+    
+    # Analyze service startup times
+    local optimization_report="/tmp/devflow_optimization_$$"
+    
+    {
+        echo "=== DevFlow Startup Optimization Report ==="
+        echo "Generated: $(date)"
+        echo ""
+        
+        echo "STARTUP STATISTICS:"
+        echo "-------------------"
+        get_startup_statistics
+        echo ""
+        
+        echo "SERVICE PERFORMANCE ANALYSIS:"
+        echo "------------------------------"
+        
+        # Analyze each service
+        local all_services=($INFRASTRUCTURE_SERVICES $APPLICATION_SERVICES $FRONTEND_SERVICES)
+        
+        for service in "${all_services[@]}"; do
+            local service_metrics=$(grep "^$service:" "$STARTUP_METRICS_FILE")
+            
+            if [[ -n "$service_metrics" ]]; then
+                local total_duration=0
+                local total_attempts=0
+                local success_count=0
+                local failure_count=0
+                local measurement_count=0
+                
+                echo "$service_metrics" | while IFS=':' read -r svc timestamp metrics; do
+                    local duration=$(echo "$metrics" | grep -o 'duration=[0-9]*' | cut -d'=' -f2)
+                    local status=$(echo "$metrics" | grep -o 'status=[^:]*' | cut -d'=' -f2)
+                    local attempts=$(echo "$metrics" | grep -o 'attempts=[0-9]*' | cut -d'=' -f2)
+                    
+                    if [[ -n "$duration" ]]; then
+                        total_duration=$((total_duration + duration))
+                        ((measurement_count++))
+                    fi
+                    
+                    if [[ -n "$attempts" ]]; then
+                        total_attempts=$((total_attempts + attempts))
+                    fi
+                    
+                    if [[ "$status" == "healthy" ]]; then
+                        ((success_count++))
+                    else
+                        ((failure_count++))
+                    fi
+                done
+                
+                if [[ $measurement_count -gt 0 ]]; then
+                    local avg_duration=$((total_duration / measurement_count))
+                    local avg_attempts=$((total_attempts / measurement_count))
+                    local success_rate=$((success_count * 100 / (success_count + failure_count)))
+                    
+                    echo "$service:"
+                    echo "  Average startup time: ${avg_duration}s"
+                    echo "  Average attempts: $avg_attempts"
+                    echo "  Success rate: ${success_rate}%"
+                    
+                    # Provide optimization recommendations
+                    if [[ $avg_duration -gt 60 ]]; then
+                        echo "  ⚠️  SLOW STARTUP: Consider optimizing $service startup process"
+                    fi
+                    
+                    if [[ $avg_attempts -gt 1 ]]; then
+                        echo "  ⚠️  RELIABILITY ISSUE: $service often requires multiple attempts"
+                    fi
+                    
+                    if [[ $success_rate -lt 90 ]]; then
+                        echo "  ❌ RELIABILITY ISSUE: $service has low success rate"
+                    fi
+                    
+                    echo ""
+                fi
+            fi
+        done
+        
+        echo "OPTIMIZATION RECOMMENDATIONS:"
+        echo "-----------------------------"
+        
+        # Generate specific recommendations
+        local slow_services=()
+        local unreliable_services=()
+        
+        # Re-analyze for recommendations (simplified version)
+        echo "1. Consider parallel startup for independent services"
+        echo "2. Increase health check timeouts for slow services"
+        echo "3. Implement service-specific startup optimizations"
+        echo "4. Monitor resource usage during startup"
+        echo "5. Consider container image optimization"
+        
+    } > "$optimization_report"
+    
+    # Display report
+    cat "$optimization_report"
+    
+    # Save to performance log
+    echo "$(timestamp) [OPTIMIZATION] Startup optimization analysis completed" >> "$PERFORMANCE_LOG"
+    
+    # Cleanup
+    rm -f "$optimization_report"
+    
+    print_success "Startup optimization analysis completed"
+}
+
+# Monitor real-time performance metrics
+monitor_realtime_performance() {
+    print_header "📊 Real-Time Performance Monitor"
+    
+    print_info "Starting real-time performance monitoring..."
+    print_info "Press Ctrl+C to stop monitoring"
+    
+    # Set up signal handling
+    trap 'print_info "Performance monitoring stopped"; return 0' INT TERM
+    
+    local monitor_interval=5
+    local iteration=0
+    
+    while true; do
+        ((iteration++))
+        
+        clear_screen
+        
+        echo -e "${BOLD}${CYAN}DevFlow Real-Time Performance Monitor${NC}"
+        echo -e "${DIM}Iteration: $iteration | Interval: ${monitor_interval}s | $(date)${NC}"
+        echo ""
+        
+        # System metrics
+        echo -e "${BOLD}SYSTEM METRICS:${NC}"
+        echo "---------------"
+        
+        # CPU usage
+        if command -v top >/dev/null 2>&1; then
+            local cpu_usage=$(top -l 1 -n 0 | grep "CPU usage" | awk '{print $3}' | sed 's/%//' 2>/dev/null || echo "N/A")
+            echo "CPU Usage: ${cpu_usage}%"
+        fi
+        
+        # Memory usage
+        if command -v free >/dev/null 2>&1; then
+            local mem_info=$(free | awk 'NR==2{printf "%.1f%%", $3*100/$2}')
+            echo "Memory Usage: $mem_info"
+        elif command -v vm_stat >/dev/null 2>&1; then
+            echo "Memory Usage: Available (macOS - use Activity Monitor for details)"
+        fi
+        
+        # Disk usage
+        local disk_usage=$(df . | tail -1 | awk '{print $5}')
+        echo "Disk Usage: $disk_usage"
+        
+        echo ""
+        
+        # Container metrics
+        echo -e "${BOLD}CONTAINER METRICS:${NC}"
+        echo "------------------"
+        
+        local all_services=($INFRASTRUCTURE_SERVICES $APPLICATION_SERVICES $FRONTEND_SERVICES)
+        local active_containers=0
+        
+        for service in "${all_services[@]}"; do
+            local container_name="devflow-${service}-1"
+            local actual_container=$(docker ps --format "{{.Names}}" | grep -E "${service}|${container_name}" | head -1)
+            
+            if [[ -n "$actual_container" ]]; then
+                ((active_containers++))
+                
+                # Get container stats
+                local stats=$(docker stats --no-stream --format "{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}" "$actual_container" 2>/dev/null)
+                
+                if [[ -n "$stats" ]]; then
+                    local cpu=$(echo "$stats" | awk '{print $1}')
+                    local memory=$(echo "$stats" | awk '{print $2}')
+                    local network=$(echo "$stats" | awk '{print $3}')
+                    
+                    printf "%-20s CPU: %-8s Memory: %-15s Network: %s\n" "$service" "$cpu" "$memory" "$network"
+                    
+                    # Record metrics for historical analysis
+                    record_resource_metrics "$service"
+                else
+                    printf "%-20s %s\n" "$service" "Stats unavailable"
+                fi
+            fi
+        done
+        
+        echo ""
+        echo "Active Containers: $active_containers"
+        
+        # Performance alerts
+        echo ""
+        echo -e "${BOLD}PERFORMANCE ALERTS:${NC}"
+        echo "-------------------"
+        
+        local alerts=()
+        
+        # Check for high resource usage
+        for service in "${all_services[@]}"; do
+            local container_name="devflow-${service}-1"
+            local actual_container=$(docker ps --format "{{.Names}}" | grep -E "${service}|${container_name}" | head -1)
+            
+            if [[ -n "$actual_container" ]]; then
+                local cpu_percent=$(docker stats --no-stream --format "{{.CPUPerc}}" "$actual_container" 2>/dev/null | sed 's/%//')
+                
+                if [[ -n "$cpu_percent" ]] && [[ $(echo "$cpu_percent > 80" | bc -l 2>/dev/null || echo "0") -eq 1 ]]; then
+                    alerts+=("⚠️  High CPU usage in $service: ${cpu_percent}%")
+                fi
+            fi
+        done
+        
+        # Check disk space
+        local disk_percent=$(df . | tail -1 | awk '{print $5}' | sed 's/%//')
+        if [[ $disk_percent -gt 85 ]]; then
+            alerts+=("⚠️  Low disk space: ${disk_percent}% used")
+        fi
+        
+        if [[ ${#alerts[@]} -eq 0 ]]; then
+            echo "✅ No performance alerts"
+        else
+            for alert in "${alerts[@]}"; do
+                echo "$alert"
+            done
+        fi
+        
+        echo ""
+        echo -e "${DIM}Next update in ${monitor_interval}s... Press Ctrl+C to stop${NC}"
+        
+        sleep $monitor_interval
+    done
+}
+
+# Performance analysis and recommendations
+performance_analysis() {
+    print_header "📈 Performance Analysis & Recommendations"
+    
+    print_status "Analyzing DevFlow platform performance..."
+    
+    # Check if we have performance data
+    local has_startup_data=false
+    local has_resource_data=false
+    
+    if [[ -f "$STARTUP_METRICS_FILE" ]] && [[ -s "$STARTUP_METRICS_FILE" ]]; then
+        has_startup_data=true
+    fi
+    
+    if [[ -f "$RESOURCE_METRICS_FILE" ]] && [[ -s "$RESOURCE_METRICS_FILE" ]]; then
+        has_resource_data=true
+    fi
+    
+    if [[ "$has_startup_data" == "false" ]] && [[ "$has_resource_data" == "false" ]]; then
+        print_warning "No performance data available for analysis"
+        print_info "Please run the platform and collect some performance data first"
+        
+        echo ""
+        echo -n -e "${CYAN}Would you like to start real-time performance monitoring now? [y/N]: ${NC}"
+        read -r start_monitoring
+        
+        if [[ "$start_monitoring" =~ ^[Yy] ]]; then
+            monitor_realtime_performance
+        fi
+        
+        return 1
+    fi
+    
+    echo ""
+    print_info "Performance data available - generating analysis..."
+    
+    # Startup performance analysis
+    if [[ "$has_startup_data" == "true" ]]; then
+        echo ""
+        print_header "🚀 Startup Performance Analysis"
+        get_startup_statistics
+        
+        echo ""
+        print_info "Startup optimization recommendations:"
+        optimize_startup_sequence >/dev/null 2>&1  # Run silently, we'll show our own summary
+        
+        # Show specific recommendations
+        echo "• Monitor services with high startup times"
+        echo "• Consider parallel startup for independent services"
+        echo "• Optimize Docker images for faster container startup"
+        echo "• Increase health check timeouts for slow services"
+    fi
+    
+    # Resource usage analysis
+    if [[ "$has_resource_data" == "true" ]]; then
+        echo ""
+        print_header "💾 Resource Usage Analysis"
+        
+        # Show current resource summary
+        get_resource_usage_summary | head -30  # Show first 30 lines to avoid overwhelming output
+        
+        echo ""
+        print_info "Resource optimization recommendations:"
+        echo "• Monitor containers with high CPU usage"
+        echo "• Consider resource limits for containers"
+        echo "• Clean up unused Docker resources regularly"
+        echo "• Monitor disk space usage"
+    fi
+    
+    # Overall recommendations
+    echo ""
+    print_header "🎯 Overall Performance Recommendations"
+    
+    echo "1. Regular Monitoring:"
+    echo "   • Use real-time performance monitoring during development"
+    echo "   • Set up automated performance alerts"
+    echo "   • Review performance metrics weekly"
+    echo ""
+    
+    echo "2. Optimization Strategies:"
+    echo "   • Optimize Docker images and reduce layer count"
+    echo "   • Implement health check caching"
+    echo "   • Use parallel service startup where possible"
+    echo "   • Consider service dependency optimization"
+    echo ""
+    
+    echo "3. Resource Management:"
+    echo "   • Set appropriate resource limits for containers"
+    echo "   • Monitor and clean up unused Docker resources"
+    echo "   • Implement log rotation and cleanup"
+    echo "   • Monitor disk space and memory usage"
+    echo ""
+    
+    echo "4. Troubleshooting:"
+    echo "   • Use diagnostic mode for detailed performance analysis"
+    echo "   • Monitor service startup patterns"
+    echo "   • Implement automated recovery for common issues"
+    echo "   • Keep performance logs for historical analysis"
+    
+    print_success "Performance analysis completed"
 }
 
 # Health check configuration
@@ -186,12 +796,2006 @@ init_logging() {
     fi
 }
 
-# Enhanced diagnostic mode toggle
+# Enhanced diagnostic mode toggle with comprehensive logging
 enable_diagnostic_mode() {
     export DIAGNOSTIC_MODE="true"
     export VERBOSE="true"
     
-    print_header "🔬 Diagnostic Mode Enabled"
+    print_header "🔬 Enhanced Diagnostic Mode Enabled"
+    print_info "Comprehensive diagnostic information will be collected and displayed"
+    print_info "Diagnostic logs will be saved to: $LOG_DIR/diagnostic.log"
+    print_info "Verbose logging is now active for all operations"
+    
+    # Initialize diagnostic log with system information
+    {
+        echo "DevFlow Enhanced Diagnostic Mode"
+        echo "==============================="
+        echo "Enabled: $(date)"
+        echo "Script Version: $SCRIPT_VERSION"
+        echo "System: $(uname -a)"
+        echo "Shell: $SHELL"
+        echo "User: $(whoami)"
+        echo "Working Directory: $(pwd)"
+        echo ""
+        echo "DIAGNOSTIC LOG STARTED"
+        echo "====================="
+        echo ""
+    } >> "$LOG_DIR/diagnostic.log"
+    
+    log_diagnostic "SYSTEM" "Enhanced diagnostic mode enabled by user"
+    
+    # Show diagnostic capabilities
+    echo ""
+    print_info "Enhanced diagnostic capabilities enabled:"
+    echo "  • Verbose service startup logging"
+    echo "  • Detailed error context collection"
+    echo "  • Real-time health check monitoring"
+    echo "  • Resource usage tracking"
+    echo "  • Network connectivity analysis"
+    echo "  • Container state monitoring"
+    echo "  • Performance metrics collection"
+    echo ""
+    
+    print_info "Use 'diagnostic' command for comprehensive system analysis"
+}
+
+# Enhanced diagnostic logging function
+log_diagnostic() {
+    local category="$1"
+    local message="$2"
+    local context="${3:-}"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    if [[ "${DIAGNOSTIC_MODE:-false}" == "true" ]]; then
+        local log_entry="[$timestamp] [$category] $message"
+        
+        if [[ -n "$context" ]]; then
+            log_entry="$log_entry (Context: $context)"
+        fi
+        
+        echo "$log_entry" >> "$LOG_DIR/diagnostic.log"
+        
+        # Also display in verbose mode
+        if [[ "${VERBOSE:-false}" == "true" ]]; then
+            echo -e "${DIM}[DIAGNOSTIC] [$category] $message${NC}"
+        fi
+    fi
+}
+
+# Enhanced diagnostic information collection with verbose output
+collect_enhanced_diagnostic_info() {
+    local focus_area="${1:-all}"
+    
+    print_header "🔬 Enhanced Diagnostic Information Collection"
+    print_info "Focus area: $focus_area"
+    
+    local diagnostic_file="$LOG_DIR/enhanced-diagnostics-$(date +%Y%m%d-%H%M%S).txt"
+    
+    {
+        echo "DevFlow Enhanced Diagnostic Report"
+        echo "=================================="
+        echo "Generated: $(date)"
+        echo "Script Version: $SCRIPT_VERSION"
+        echo "Focus Area: $focus_area"
+        echo "Diagnostic Mode: ${DIAGNOSTIC_MODE:-false}"
+        echo ""
+        
+        if [[ "$focus_area" == "all" ]] || [[ "$focus_area" == "system" ]]; then
+            echo "SYSTEM INFORMATION"
+            echo "------------------"
+            echo "OS: $(uname -a)"
+            echo "Shell: $SHELL"
+            echo "User: $(whoami)"
+            echo "Working Directory: $(pwd)"
+            echo "Script Location: $SCRIPT_DIR"
+            echo "PATH: $PATH"
+            echo ""
+            
+            echo "ENVIRONMENT VARIABLES"
+            echo "--------------------"
+            env | grep -E "(DOCKER|COMPOSE|DEVFLOW|NODE|NPM)" | sort
+            echo ""
+        fi
+        
+        if [[ "$focus_area" == "all" ]] || [[ "$focus_area" == "docker" ]]; then
+            echo "DOCKER DETAILED INFORMATION"
+            echo "---------------------------"
+            if command -v docker >/dev/null 2>&1; then
+                echo "Docker Version:"
+                docker --version 2>/dev/null || echo "  Docker version not available"
+                echo ""
+                
+                echo "Docker System Information:"
+                if docker info 2>/dev/null; then
+                    echo "  Docker is running normally"
+                else
+                    echo "  Docker is not running or not accessible"
+                    echo "  Error details:"
+                    docker info 2>&1 | head -10 | sed 's/^/    /'
+                fi
+                echo ""
+                
+                echo "Docker Compose Version:"
+                docker-compose --version 2>/dev/null || echo "  Docker Compose not available"
+                echo ""
+                
+                echo "Running Containers (Detailed):"
+                docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.RunningFor}}\t{{.Size}}" 2>/dev/null || echo "  Cannot access Docker containers"
+                echo ""
+                
+                echo "All Containers (Detailed):"
+                docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.CreatedAt}}\t{{.Size}}" 2>/dev/null || echo "  Cannot access Docker containers"
+                echo ""
+                
+                echo "Container Resource Usage:"
+                local all_services=($INFRASTRUCTURE_SERVICES $APPLICATION_SERVICES $FRONTEND_SERVICES)
+                for service in "${all_services[@]}"; do
+                    local container_name="devflow-${service}-1"
+                    local actual_container=$(docker ps --format "{{.Names}}" | grep -E "${service}|${container_name}" | head -1)
+                    
+                    if [[ -n "$actual_container" ]]; then
+                        echo "Service: $service (Container: $actual_container)"
+                        local stats=$(docker stats --no-stream --format "table {{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}" "$actual_container" 2>/dev/null | tail -1)
+                        
+                        if [[ -n "$stats" ]]; then
+                            echo "  CPU: $(echo "$stats" | awk '{print $1}')"
+                            echo "  Memory: $(echo "$stats" | awk '{print $2}') ($(echo "$stats" | awk '{print $3}'))"
+                            echo "  Network I/O: $(echo "$stats" | awk '{print $4}')"
+                            echo "  Block I/O: $(echo "$stats" | awk '{print $5}')"
+                        else
+                            echo "  Stats not available"
+                        fi
+                        echo ""
+                    fi
+                done
+                
+                echo "Docker Images:"
+                docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" 2>/dev/null || echo "  Cannot access Docker images"
+                echo ""
+                
+                echo "Docker Networks:"
+                docker network ls 2>/dev/null || echo "  Cannot access Docker networks"
+                echo ""
+                
+                echo "Docker Volumes:"
+                docker volume ls 2>/dev/null || echo "  Cannot access Docker volumes"
+                echo ""
+                
+                echo "Docker System Usage:"
+                docker system df 2>/dev/null || echo "  Cannot access Docker system information"
+                echo ""
+            else
+                echo "Docker is not installed or not in PATH"
+            fi
+        fi
+        
+        if [[ "$focus_area" == "all" ]] || [[ "$focus_area" == "services" ]]; then
+            echo "SERVICE DETAILED ANALYSIS"
+            echo "------------------------"
+            local all_services=($INFRASTRUCTURE_SERVICES $APPLICATION_SERVICES $FRONTEND_SERVICES)
+            
+            for service in "${all_services[@]}"; do
+                echo "Service: $service"
+                echo "  Description: $(get_service_description "$service")"
+                echo "  Port: $(get_service_port "$service")"
+                echo "  Dependencies: $(get_service_dependencies "$service")"
+                echo "  Status: $(get_service_status "$service")"
+                
+                # Check if container exists and get detailed info
+                local container_name="devflow-${service}-1"
+                local actual_container=$(docker ps -a --format "{{.Names}}" | grep -E "${service}|${container_name}" | head -1)
+                
+                if [[ -n "$actual_container" ]]; then
+                    echo "  Container: $actual_container"
+                    local container_status=$(docker ps -a --format "{{.Names}}\t{{.Status}}" | grep "$actual_container" | awk '{print $2}' | head -1)
+                    echo "  Container Status: $container_status"
+                    
+                    # Get container logs (last 10 lines)
+                    echo "  Recent Logs:"
+                    docker logs --tail=10 "$actual_container" 2>&1 | sed 's/^/    /' || echo "    No logs available"
+                else
+                    echo "  Container: Not found"
+                fi
+                
+                # Test health check
+                local health_cmd=$(get_health_check_command "$service")
+                if [[ -n "$health_cmd" ]]; then
+                    echo "  Health Check: Testing..."
+                    if eval "$health_cmd" >/dev/null 2>&1; then
+                        echo "  Health Check: PASSED"
+                    else
+                        echo "  Health Check: FAILED"
+                    fi
+                fi
+                
+                echo ""
+            done
+        fi
+        
+        if [[ "$focus_area" == "all" ]] || [[ "$focus_area" == "network" ]]; then
+            echo "NETWORK DETAILED ANALYSIS"
+            echo "------------------------"
+            echo "Network Interfaces:"
+            if command -v ip >/dev/null 2>&1; then
+                ip addr show 2>/dev/null || echo "  Network interface information not available"
+            elif command -v ifconfig >/dev/null 2>&1; then
+                ifconfig 2>/dev/null || echo "  Network interface information not available"
+            fi
+            echo ""
+            
+            echo "DNS Resolution Tests:"
+            local dns_servers=("google.com" "github.com" "docker.io")
+            for server in "${dns_servers[@]}"; do
+                if nslookup "$server" >/dev/null 2>&1; then
+                    echo "  $server: RESOLVED"
+                else
+                    echo "  $server: FAILED"
+                fi
+            done
+            echo ""
+            
+            echo "Connectivity Tests:"
+            local endpoints=("google.com:80" "github.com:443" "docker.io:443")
+            for endpoint in "${endpoints[@]}"; do
+                local host=$(echo "$endpoint" | cut -d':' -f1)
+                local port=$(echo "$endpoint" | cut -d':' -f2)
+                
+                if timeout 5 bash -c "</dev/tcp/$host/$port" 2>/dev/null; then
+                    echo "  $endpoint: CONNECTED"
+                else
+                    echo "  $endpoint: FAILED"
+                fi
+            done
+            echo ""
+            
+            echo "Port Usage Analysis:"
+            for port in "${REQUIRED_PORTS[@]}"; do
+                local process_info=$(lsof -ti:$port 2>/dev/null)
+                if [[ -n "$process_info" ]]; then
+                    local process_name=$(ps -p $process_info -o comm= 2>/dev/null || echo "unknown")
+                    echo "  Port $port: OCCUPIED by $process_name (PID: $process_info)"
+                else
+                    echo "  Port $port: AVAILABLE"
+                fi
+            done
+            echo ""
+        fi
+        
+        if [[ "$focus_area" == "all" ]] || [[ "$focus_area" == "resources" ]]; then
+            echo "RESOURCE DETAILED ANALYSIS"
+            echo "-------------------------"
+            echo "Disk Usage (Detailed):"
+            df -h 2>/dev/null || echo "  Disk usage information not available"
+            echo ""
+            
+            echo "Memory Usage (Detailed):"
+            if command -v free >/dev/null 2>&1; then
+                free -h
+            elif command -v vm_stat >/dev/null 2>&1; then
+                vm_stat
+            else
+                echo "  Memory usage information not available"
+            fi
+            echo ""
+            
+            echo "CPU Information:"
+            if command -v nproc >/dev/null 2>&1; then
+                echo "  CPU Cores: $(nproc)"
+            elif command -v sysctl >/dev/null 2>&1; then
+                echo "  CPU Cores: $(sysctl -n hw.ncpu 2>/dev/null || echo 'unknown')"
+            fi
+            
+            if command -v top >/dev/null 2>&1; then
+                echo "  CPU Usage:"
+                top -l 1 -n 0 | grep "CPU usage" 2>/dev/null || echo "    CPU usage information not available"
+            fi
+            echo ""
+            
+            echo "Load Average:"
+            if command -v uptime >/dev/null 2>&1; then
+                uptime
+            else
+                echo "  Load average information not available"
+            fi
+            echo ""
+        fi
+        
+        if [[ "$focus_area" == "all" ]] || [[ "$focus_area" == "logs" ]]; then
+            echo "LOG FILE ANALYSIS"
+            echo "----------------"
+            echo "Available Log Files:"
+            find "$LOG_DIR" -name "*.log" -type f 2>/dev/null | while read -r log_file; do
+                local file_size=$(stat -f%z "$log_file" 2>/dev/null || stat -c%s "$log_file" 2>/dev/null || echo "unknown")
+                local mod_time=$(stat -f%Sm "$log_file" 2>/dev/null || stat -c%y "$log_file" 2>/dev/null || echo "unknown")
+                echo "  $log_file (Size: $file_size bytes, Modified: $mod_time)"
+            done
+            echo ""
+            
+            echo "Recent Error History:"
+            if [[ -f "$LOG_DIR/error_history.log" ]]; then
+                tail -20 "$LOG_DIR/error_history.log" | sed 's/^/  /'
+            else
+                echo "  No error history available"
+            fi
+            echo ""
+        fi
+        
+        echo "DIAGNOSTIC SUMMARY"
+        echo "-----------------"
+        echo "Report Generated: $(date)"
+        echo "Total Sections: $(echo "$focus_area" | tr ',' '\n' | wc -l)"
+        echo "Diagnostic File: $diagnostic_file"
+        echo ""
+        
+    } > "$diagnostic_file"
+    
+    print_success "Enhanced diagnostic information collected"
+    print_info "Report saved to: $diagnostic_file"
+    
+    # Log diagnostic collection
+    log_diagnostic "COLLECTION" "Enhanced diagnostic information collected" "focus=$focus_area file=$diagnostic_file"
+    
+    echo "$diagnostic_file"
+}
+
+# Automatic recovery wizard
+run_automatic_recovery_wizard() {
+    print_header "🧙‍♂️ Automatic Recovery Wizard"
+    
+    print_info "Analyzing system for recoverable issues..."
+    
+    # Collect current issues
+    local issues=()
+    
+    # Check Docker
+    if ! docker info >/dev/null 2>&1; then
+        issues+=("DOCKER_NOT_RUNNING")
+    fi
+    
+    # Check port conflicts
+    for port in "${REQUIRED_PORTS[@]}"; do
+        if lsof -ti:$port >/dev/null 2>&1; then
+            local service_using_port=""
+            local all_services=($INFRASTRUCTURE_SERVICES $APPLICATION_SERVICES $FRONTEND_SERVICES)
+            for service in "${all_services[@]}"; do
+                if [[ "$(get_service_port "$service")" == "$port" ]]; then
+                    service_using_port="$service"
+                    break
+                fi
+            done
+            
+            if [[ -n "$service_using_port" ]]; then
+                issues+=("PORT_CONFLICT:$service_using_port")
+            fi
+        fi
+    done
+    
+    # Check service health
+    local all_services=($INFRASTRUCTURE_SERVICES $APPLICATION_SERVICES $FRONTEND_SERVICES)
+    for service in "${all_services[@]}"; do
+        local status=$(get_service_status "$service")
+        if [[ "$status" == "unhealthy" ]] || [[ "$status" == "failed" ]]; then
+            issues+=("SERVICE_HEALTH_FAILED:$service")
+        fi
+    done
+    
+    # Check disk space
+    local disk_usage=$(df . | tail -1 | awk '{print $5}' | sed 's/%//')
+    if [[ $disk_usage -gt 85 ]]; then
+        issues+=("DISK_SPACE_LOW")
+    fi
+    
+    if [[ ${#issues[@]} -eq 0 ]]; then
+        print_success "✅ No recoverable issues found!"
+        return 0
+    fi
+    
+    print_info "Found ${#issues[@]} recoverable issues:"
+    for issue in "${issues[@]}"; do
+        local error_type=$(echo "$issue" | cut -d':' -f1)
+        local context=$(echo "$issue" | cut -d':' -f2)
+        echo "  • $error_type $(if [[ -n "$context" ]]; then echo "($context)"; fi)"
+    done
+    
+    echo ""
+    echo -n -e "${CYAN}Proceed with automatic recovery? [Y/n]: ${NC}"
+    read -r proceed
+    
+    if [[ "$proceed" =~ ^[Nn] ]]; then
+        print_info "Recovery cancelled by user"
+        return 0
+    fi
+    
+    # Attempt recovery for each issue
+    local recovery_success=0
+    local recovery_failed=0
+    
+    for issue in "${issues[@]}"; do
+        local error_type=$(echo "$issue" | cut -d':' -f1)
+        local context=$(echo "$issue" | cut -d':' -f2)
+        
+        echo ""
+        print_status "Recovering from: $error_type $(if [[ -n "$context" ]]; then echo "($context)"; fi)"
+        
+        if attempt_automatic_recovery_with_retry "$error_type" "$context" 2 3; then
+            ((recovery_success++))
+        else
+            ((recovery_failed++))
+        fi
+    done
+    
+    echo ""
+    print_header "🏁 Recovery Summary"
+    print_info "Total issues: ${#issues[@]}"
+    print_success "Successfully recovered: $recovery_success"
+    
+    if [[ $recovery_failed -gt 0 ]]; then
+        print_error "Failed to recover: $recovery_failed"
+        print_info "Run '$0 troubleshoot' for manual recovery guidance"
+    else
+        print_success "🎉 All issues recovered successfully!"
+    fi
+    
+    return $recovery_failed
+}
+
+# Comprehensive diagnostics runner
+run_comprehensive_diagnostics() {
+    print_header "🔬 DevFlow Comprehensive Diagnostics"
+    
+    print_info "Starting comprehensive diagnostic analysis..."
+    print_info "This may take a few minutes to complete..."
+    echo ""
+    
+    # Step 1: Environment validation
+    print_status "Step 1/7: Environment Validation"
+    local env_issues=()
+    
+    # Check Docker
+    if ! command -v docker >/dev/null 2>&1; then
+        env_issues+=("Docker not installed")
+    elif ! docker info >/dev/null 2>&1; then
+        env_issues+=("Docker not running")
+    fi
+    
+    # Check Docker Compose
+    if ! command -v docker-compose >/dev/null 2>&1; then
+        env_issues+=("Docker Compose not installed")
+    fi
+    
+    # Check required commands
+    for cmd in "${REQUIRED_COMMANDS[@]}"; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            env_issues+=("Required command missing: $cmd")
+        fi
+    done
+    
+    if [[ ${#env_issues[@]} -eq 0 ]]; then
+        print_success "✅ Environment validation passed"
+    else
+        print_warning "⚠️  Environment issues found:"
+        for issue in "${env_issues[@]}"; do
+            echo "   • $issue"
+        done
+    fi
+    echo ""
+    
+    # Step 2: Port conflict analysis
+    print_status "Step 2/7: Port Conflict Analysis"
+    local port_conflicts=()
+    
+    for port in "${REQUIRED_PORTS[@]}"; do
+        local process_info=$(lsof -ti:$port 2>/dev/null)
+        if [[ -n "$process_info" ]]; then
+            local process_name=$(ps -p $process_info -o comm= 2>/dev/null || echo "unknown")
+            port_conflicts+=("Port $port occupied by $process_name (PID: $process_info)")
+        fi
+    done
+    
+    if [[ ${#port_conflicts[@]} -eq 0 ]]; then
+        print_success "✅ No port conflicts detected"
+    else
+        print_warning "⚠️  Port conflicts found:"
+        for conflict in "${port_conflicts[@]}"; do
+            echo "   • $conflict"
+        done
+    fi
+    echo ""
+    
+    # Step 3: Service status analysis
+    print_status "Step 3/7: Service Status Analysis"
+    local service_issues=()
+    local healthy_services=0
+    local total_services=0
+    
+    local all_services=($INFRASTRUCTURE_SERVICES $APPLICATION_SERVICES $FRONTEND_SERVICES)
+    
+    for service in "${all_services[@]}"; do
+        ((total_services++))
+        local status=$(get_service_status "$service")
+        
+        case "$status" in
+            "healthy"|"running")
+                ((healthy_services++))
+                ;;
+            "unhealthy"|"failed")
+                service_issues+=("Service $service is $status")
+                ;;
+            "stopped"|"unknown")
+                service_issues+=("Service $service is not running")
+                ;;
+        esac
+    done
+    
+    if [[ ${#service_issues[@]} -eq 0 ]]; then
+        print_success "✅ All services are healthy ($healthy_services/$total_services)"
+    else
+        print_warning "⚠️  Service issues found ($healthy_services/$total_services healthy):"
+        for issue in "${service_issues[@]}"; do
+            echo "   • $issue"
+        done
+    fi
+    echo ""
+    
+    # Step 4: Resource usage analysis
+    print_status "Step 4/7: Resource Usage Analysis"
+    local resource_warnings=()
+    
+    # Check disk space
+    local disk_usage=$(df . | tail -1 | awk '{print $5}' | sed 's/%//')
+    if [[ $disk_usage -gt 90 ]]; then
+        resource_warnings+=("Critical disk usage: ${disk_usage}%")
+    elif [[ $disk_usage -gt 80 ]]; then
+        resource_warnings+=("High disk usage: ${disk_usage}%")
+    fi
+    
+    # Check memory if available
+    if command -v free >/dev/null 2>&1; then
+        local mem_usage=$(free | awk 'NR==2{printf "%.1f", $3*100/$2}')
+        if [[ $(echo "$mem_usage > 90" | bc -l 2>/dev/null || echo "0") -eq 1 ]]; then
+            resource_warnings+=("High memory usage: ${mem_usage}%")
+        fi
+    fi
+    
+    if [[ ${#resource_warnings[@]} -eq 0 ]]; then
+        print_success "✅ Resource usage is within normal limits"
+    else
+        print_warning "⚠️  Resource usage warnings:"
+        for warning in "${resource_warnings[@]}"; do
+            echo "   • $warning"
+        done
+    fi
+    echo ""
+    
+    # Step 5: Network connectivity test
+    print_status "Step 5/7: Network Connectivity Test"
+    local network_issues=()
+    
+    # Test DNS resolution
+    if ! nslookup google.com >/dev/null 2>&1; then
+        network_issues+=("DNS resolution failed")
+    fi
+    
+    # Test internet connectivity
+    local test_endpoints=("google.com:80" "github.com:443" "docker.io:443")
+    local failed_connections=0
+    
+    for endpoint in "${test_endpoints[@]}"; do
+        local host=$(echo "$endpoint" | cut -d':' -f1)
+        local port=$(echo "$endpoint" | cut -d':' -f2)
+        
+        if ! timeout 5 bash -c "</dev/tcp/$host/$port" 2>/dev/null; then
+            ((failed_connections++))
+        fi
+    done
+    
+    if [[ $failed_connections -eq ${#test_endpoints[@]} ]]; then
+        network_issues+=("No internet connectivity detected")
+    elif [[ $failed_connections -gt 0 ]]; then
+        network_issues+=("Partial connectivity issues ($failed_connections/${#test_endpoints[@]} endpoints failed)")
+    fi
+    
+    if [[ ${#network_issues[@]} -eq 0 ]]; then
+        print_success "✅ Network connectivity is working"
+    else
+        print_warning "⚠️  Network connectivity issues:"
+        for issue in "${network_issues[@]}"; do
+            echo "   • $issue"
+        done
+    fi
+    echo ""
+    
+    # Step 6: Configuration validation
+    print_status "Step 6/7: Configuration Validation"
+    local config_issues=()
+    
+    # Check docker-compose.yml
+    if [[ ! -f "docker-compose.yml" ]]; then
+        config_issues+=("docker-compose.yml not found")
+    elif ! docker-compose config >/dev/null 2>&1; then
+        config_issues+=("docker-compose.yml has syntax errors")
+    fi
+    
+    # Check .env file
+    if [[ ! -f ".env" ]] && [[ -f ".env.example" ]]; then
+        config_issues+=(".env file missing (but .env.example exists)")
+    fi
+    
+    if [[ ${#config_issues[@]} -eq 0 ]]; then
+        print_success "✅ Configuration files are valid"
+    else
+        print_warning "⚠️  Configuration issues found:"
+        for issue in "${config_issues[@]}"; do
+            echo "   • $issue"
+        done
+    fi
+    echo ""
+    
+    # Step 7: Generate comprehensive report
+    print_status "Step 7/7: Generating Comprehensive Report"
+    local diagnostic_report=$(collect_comprehensive_diagnostics)
+    print_success "✅ Comprehensive diagnostic report generated"
+    echo ""
+    
+    # Summary
+    print_header "📊 Diagnostic Summary"
+    
+    local total_issues=$((${#env_issues[@]} + ${#port_conflicts[@]} + ${#service_issues[@]} + ${#resource_warnings[@]} + ${#network_issues[@]} + ${#config_issues[@]}))
+    
+    if [[ $total_issues -eq 0 ]]; then
+        print_success "🎉 No issues detected! DevFlow platform is ready to run."
+    else
+        print_warning "⚠️  Total issues found: $total_issues"
+        echo ""
+        echo -e "${CYAN}Issue Breakdown:${NC}"
+        echo "   • Environment issues: ${#env_issues[@]}"
+        echo "   • Port conflicts: ${#port_conflicts[@]}"
+        echo "   • Service issues: ${#service_issues[@]}"
+        echo "   • Resource warnings: ${#resource_warnings[@]}"
+        echo "   • Network issues: ${#network_issues[@]}"
+        echo "   • Configuration issues: ${#config_issues[@]}"
+        echo ""
+        
+        # Provide recovery recommendations
+        echo -e "${YELLOW}🔧 RECOMMENDED ACTIONS:${NC}"
+        
+        if [[ ${#env_issues[@]} -gt 0 ]]; then
+            echo "1. Fix environment issues (install/start Docker)"
+        fi
+        
+        if [[ ${#port_conflicts[@]} -gt 0 ]]; then
+            echo "2. Resolve port conflicts (stop conflicting processes)"
+        fi
+        
+        if [[ ${#service_issues[@]} -gt 0 ]]; then
+            echo "3. Restart failed services"
+        fi
+        
+        if [[ ${#resource_warnings[@]} -gt 0 ]]; then
+            echo "4. Address resource usage issues"
+        fi
+        
+        if [[ ${#network_issues[@]} -gt 0 ]]; then
+            echo "5. Fix network connectivity"
+        fi
+        
+        if [[ ${#config_issues[@]} -gt 0 ]]; then
+            echo "6. Validate and fix configuration files"
+        fi
+        
+        echo ""
+        echo -e "${CYAN}For automated recovery, run: '$0 recovery'${NC}"
+    fi
+    
+    echo ""
+    echo -e "${CYAN}📋 Reports Generated:${NC}"
+    echo "   • Comprehensive diagnostic report: $diagnostic_report"
+    echo "   • Error history: $LOG_DIR/error_history.log"
+    echo "   • Main log: $SCRIPT_LOG"
+    
+    if [[ "${DIAGNOSTIC_MODE:-false}" == "true" ]]; then
+        echo "   • Diagnostic log: $LOG_DIR/diagnostic.log"
+    fi
+    
+    echo ""
+    echo -e "${CYAN}🔧 Available Recovery Options:${NC}"
+    echo "   • Automatic recovery: $0 recovery"
+    echo "   • Manual troubleshooting: $0 troubleshoot"
+    echo "   • Enhanced diagnostics: $0 diagnostic --enhanced"
+    echo "   • Error analysis: $0 analyze-errors"
+    
+    echo ""
+    echo -n -e "${CYAN}Would you like to view the comprehensive diagnostic report? [y/N]: ${NC}"
+    read -r view_report
+    
+    if [[ "$view_report" =~ ^[Yy] ]]; then
+        less "$diagnostic_report"
+    fi
+    
+    # Offer automatic recovery if issues were found
+    if [[ $total_issues -gt 0 ]]; then
+        echo ""
+        echo -n -e "${CYAN}Would you like to attempt automatic recovery? [y/N]: ${NC}"
+        read -r attempt_recovery
+        
+        if [[ "$attempt_recovery" =~ ^[Yy] ]]; then
+            run_automatic_recovery_wizard
+        fi
+    fi
+    
+    return $total_issues
+}
+
+# Enhanced error classification system with comprehensive error types
+classify_error_severity() {
+    local error_type="$1"
+    
+    case "$error_type" in
+        "DOCKER_NOT_RUNNING"|"DOCKER_NOT_INSTALLED"|"COMPOSE_FILE_INVALID"|"SYSTEM_FAILURE")
+            echo "CRITICAL"
+            ;;
+        "SERVICE_START_FAILED"|"SERVICE_HEALTH_FAILED"|"DATABASE_CONNECTION_FAILED"|"DEPENDENCY_FAILURE"|"CONTAINER_CRASH")
+            echo "HIGH"
+            ;;
+        "PORT_CONFLICT"|"NETWORK_UNREACHABLE"|"CONFIG_INVALID"|"PERMISSION_DENIED"|"RESOURCE_LIMIT_EXCEEDED")
+            echo "MEDIUM"
+            ;;
+        "TIMEOUT"|"RESOURCE_EXHAUSTED"|"DISK_SPACE_LOW"|"MEMORY_WARNING"|"SLOW_RESPONSE")
+            echo "LOW"
+            ;;
+        *)
+            echo "UNKNOWN"
+            ;;
+    esac
+}
+
+# Enhanced error code mapping for structured error handling
+get_error_code() {
+    local error_type="$1"
+    
+    case "$error_type" in
+        "DOCKER_NOT_RUNNING") echo "E001" ;;
+        "DOCKER_NOT_INSTALLED") echo "E002" ;;
+        "COMPOSE_FILE_INVALID") echo "E003" ;;
+        "SERVICE_START_FAILED") echo "E004" ;;
+        "SERVICE_HEALTH_FAILED") echo "E005" ;;
+        "DATABASE_CONNECTION_FAILED") echo "E006" ;;
+        "PORT_CONFLICT") echo "E007" ;;
+        "NETWORK_UNREACHABLE") echo "E008" ;;
+        "CONFIG_INVALID") echo "E009" ;;
+        "TIMEOUT") echo "E010" ;;
+        "RESOURCE_EXHAUSTED") echo "E011" ;;
+        "DISK_SPACE_LOW") echo "E012" ;;
+        "DEPENDENCY_FAILURE") echo "E013" ;;
+        "CONTAINER_CRASH") echo "E014" ;;
+        "PERMISSION_DENIED") echo "E015" ;;
+        "RESOURCE_LIMIT_EXCEEDED") echo "E016" ;;
+        "MEMORY_WARNING") echo "E017" ;;
+        "SLOW_RESPONSE") echo "E018" ;;
+        "SYSTEM_FAILURE") echo "E019" ;;
+        *) echo "E999" ;;
+    esac
+}
+
+# Comprehensive recovery strategy mapping
+get_recovery_strategy() {
+    local error_code="$1"
+    
+    case "$error_code" in
+        "E001") echo "Start Docker Desktop or Docker daemon" ;;
+        "E002") echo "Install Docker and Docker Compose" ;;
+        "E003") echo "Validate and fix docker-compose.yml syntax" ;;
+        "E004") echo "Check service dependencies and restart in correct order" ;;
+        "E005") echo "Restart service and check health endpoint configuration" ;;
+        "E006") echo "Verify database connection settings and network connectivity" ;;
+        "E007") echo "Stop conflicting processes or change service ports" ;;
+        "E008") echo "Check network connectivity and DNS resolution" ;;
+        "E009") echo "Validate configuration files and environment variables" ;;
+        "E010") echo "Increase timeout values or check system performance" ;;
+        "E011") echo "Free up system resources or increase limits" ;;
+        "E012") echo "Clean up disk space or move to larger storage" ;;
+        "E013") echo "Start dependency services first" ;;
+        "E014") echo "Check container logs and restart with fresh state" ;;
+        "E015") echo "Fix file permissions or run with appropriate privileges" ;;
+        "E016") echo "Increase resource limits or optimize resource usage" ;;
+        "E017") echo "Monitor memory usage and consider system upgrade" ;;
+        "E018") echo "Optimize service configuration or check system load" ;;
+        "E019") echo "Perform system diagnostics and restart affected components" ;;
+        *) echo "Contact support with error details" ;;
+    esac
+}
+
+# Enhanced error impact assessment
+assess_error_impact() {
+    local error_type="$1"
+    local context="$2"
+    
+    case "$error_type" in
+        "DOCKER_NOT_RUNNING"|"DOCKER_NOT_INSTALLED")
+            echo "SYSTEM_WIDE: All services will fail to start"
+            ;;
+        "SERVICE_START_FAILED")
+            local dependencies=$(get_services_depending_on "$context")
+            if [[ -n "$dependencies" ]]; then
+                echo "CASCADE: Services $dependencies will also fail"
+            else
+                echo "ISOLATED: Only $context service affected"
+            fi
+            ;;
+        "PORT_CONFLICT")
+            echo "SERVICE_SPECIFIC: $context service cannot bind to required port"
+            ;;
+        "DISK_SPACE_LOW")
+            echo "SYSTEM_WIDE: All services may experience performance issues"
+            ;;
+        "NETWORK_UNREACHABLE")
+            echo "EXTERNAL: Services requiring internet access will fail"
+            ;;
+        *)
+            echo "UNKNOWN: Impact assessment not available"
+            ;;
+    esac
+}
+
+# Get services that depend on a given service
+get_services_depending_on() {
+    local target_service="$1"
+    local dependent_services=()
+    
+    local all_services=($INFRASTRUCTURE_SERVICES $APPLICATION_SERVICES $FRONTEND_SERVICES)
+    
+    for service in "${all_services[@]}"; do
+        local dependencies=$(get_service_dependencies "$service")
+        if [[ "$dependencies" =~ $target_service ]]; then
+            dependent_services+=("$service")
+        fi
+    done
+    
+    echo "${dependent_services[*]}"
+}
+
+# Enhanced error context collection
+collect_error_context() {
+    local error_type="$1"
+    local service_context="$2"
+    local context_data=""
+    
+    # Collect system context
+    context_data+="timestamp=$(date +%s),"
+    context_data+="os=$(uname -s),"
+    context_data+="arch=$(uname -m),"
+    
+    # Collect Docker context
+    if command -v docker >/dev/null 2>&1; then
+        local docker_status="running"
+        docker info >/dev/null 2>&1 || docker_status="not_running"
+        context_data+="docker_status=$docker_status,"
+        
+        if [[ "$docker_status" == "running" ]]; then
+            local docker_version=$(docker --version | awk '{print $3}' | sed 's/,//')
+            context_data+="docker_version=$docker_version,"
+        fi
+    else
+        context_data+="docker_status=not_installed,"
+    fi
+    
+    # Collect service-specific context
+    if [[ -n "$service_context" ]]; then
+        local service_port=$(get_service_port "$service_context")
+        local service_status=$(get_service_status "$service_context")
+        context_data+="service=$service_context,"
+        context_data+="service_port=$service_port,"
+        context_data+="service_status=$service_status,"
+        
+        # Check if service container exists
+        local container_name="devflow-${service_context}-1"
+        local container_status="not_found"
+        if docker ps -a --format "{{.Names}}" | grep -q "$container_name" 2>/dev/null; then
+            container_status=$(docker ps -a --format "{{.Names}}\t{{.Status}}" | grep "$container_name" | awk '{print $2}' | head -1)
+        fi
+        context_data+="container_status=$container_status,"
+    fi
+    
+    # Collect resource context
+    local disk_usage=$(df . | tail -1 | awk '{print $5}' | sed 's/%//')
+    context_data+="disk_usage=${disk_usage}%,"
+    
+    # Collect network context
+    local network_status="unknown"
+    if timeout 3 bash -c "</dev/tcp/google.com/80" 2>/dev/null; then
+        network_status="connected"
+    else
+        network_status="disconnected"
+    fi
+    context_data+="network_status=$network_status"
+    
+    echo "$context_data"
+}
+
+# Enhanced automatic recovery with retry logic and comprehensive error handling
+attempt_automatic_recovery_with_retry() {
+    local error_type="$1"
+    local context="$2"
+    local max_attempts="${3:-3}"
+    local retry_delay="${4:-5}"
+    
+    local attempt=1
+    local recovery_successful=false
+    local recovery_log="$LOG_DIR/recovery-$(date +%Y%m%d-%H%M%S).log"
+    
+    print_header "🔄 Automatic Recovery System"
+    print_status "Attempting automatic recovery for: $error_type"
+    
+    if [[ -n "$context" ]]; then
+        print_info "Context: $context"
+    fi
+    
+    print_info "Max attempts: $max_attempts, Retry delay: ${retry_delay}s"
+    echo ""
+    
+    # Initialize recovery log
+    {
+        echo "DevFlow Automatic Recovery Log"
+        echo "=============================="
+        echo "Timestamp: $(date)"
+        echo "Error Type: $error_type"
+        echo "Context: $context"
+        echo "Max Attempts: $max_attempts"
+        echo "Retry Delay: ${retry_delay}s"
+        echo ""
+    } > "$recovery_log"
+    
+    while [[ $attempt -le $max_attempts ]] && [[ "$recovery_successful" == "false" ]]; do
+        print_status "Recovery attempt $attempt of $max_attempts..."
+        echo "Attempt $attempt: $(date)" >> "$recovery_log"
+        
+        case "$error_type" in
+            "DOCKER_NOT_RUNNING")
+                if attempt_docker_recovery 2>&1 | tee -a "$recovery_log"; then
+                    recovery_successful=true
+                fi
+                ;;
+            "PORT_CONFLICT")
+                if attempt_port_conflict_recovery "$context" 2>&1 | tee -a "$recovery_log"; then
+                    recovery_successful=true
+                fi
+                ;;
+            "SERVICE_START_FAILED")
+                if attempt_service_recovery "$context" 2>&1 | tee -a "$recovery_log"; then
+                    recovery_successful=true
+                fi
+                ;;
+            "DISK_SPACE_LOW")
+                if attempt_disk_cleanup_recovery 2>&1 | tee -a "$recovery_log"; then
+                    recovery_successful=true
+                fi
+                ;;
+            "NETWORK_UNREACHABLE")
+                if attempt_network_recovery 2>&1 | tee -a "$recovery_log"; then
+                    recovery_successful=true
+                fi
+                ;;
+            "CONFIG_INVALID")
+                if attempt_config_recovery "$context" 2>&1 | tee -a "$recovery_log"; then
+                    recovery_successful=true
+                fi
+                ;;
+            "SERVICE_HEALTH_FAILED")
+                if attempt_health_check_recovery "$context" 2>&1 | tee -a "$recovery_log"; then
+                    recovery_successful=true
+                fi
+                ;;
+            "DEPENDENCY_FAILURE")
+                if attempt_dependency_recovery "$context" 2>&1 | tee -a "$recovery_log"; then
+                    recovery_successful=true
+                fi
+                ;;
+            "CONTAINER_CRASH")
+                if attempt_container_crash_recovery "$context" 2>&1 | tee -a "$recovery_log"; then
+                    recovery_successful=true
+                fi
+                ;;
+            "RESOURCE_LIMIT_EXCEEDED")
+                if attempt_resource_limit_recovery "$context" 2>&1 | tee -a "$recovery_log"; then
+                    recovery_successful=true
+                fi
+                ;;
+            *)
+                print_warning "No automatic recovery available for error type: $error_type"
+                echo "No automatic recovery available for error type: $error_type" >> "$recovery_log"
+                break
+                ;;
+        esac
+        
+        echo "Attempt $attempt result: $(if [[ "$recovery_successful" == "true" ]]; then echo "SUCCESS"; else echo "FAILED"; fi)" >> "$recovery_log"
+        
+        if [[ "$recovery_successful" == "false" ]] && [[ $attempt -lt $max_attempts ]]; then
+            print_info "Recovery attempt $attempt failed, waiting ${retry_delay}s before retry..."
+            echo "Waiting ${retry_delay}s before retry..." >> "$recovery_log"
+            sleep $retry_delay
+        fi
+        
+        ((attempt++))
+    done
+    
+    # Log final result
+    echo "" >> "$recovery_log"
+    echo "Final Result: $(if [[ "$recovery_successful" == "true" ]]; then echo "SUCCESS"; else echo "FAILED"; fi)" >> "$recovery_log"
+    echo "Total Attempts: $((attempt-1))" >> "$recovery_log"
+    echo "Recovery Log: $recovery_log" >> "$recovery_log"
+    
+    if [[ "$recovery_successful" == "true" ]]; then
+        print_success "✅ Automatic recovery successful after $((attempt-1)) attempts"
+        print_info "Recovery details logged to: $recovery_log"
+        log_message "RECOVERY" "Automatic recovery successful for $error_type after $((attempt-1)) attempts" "$context"
+        
+        # Verify recovery by running a quick health check
+        if [[ -n "$context" ]] && [[ "$context" != "system" ]]; then
+            print_status "Verifying recovery by checking service health..."
+            if wait_for_service_health "$context" 30; then
+                print_success "✅ Service $context is now healthy after recovery"
+            else
+                print_warning "⚠️  Recovery completed but service health check failed"
+            fi
+        fi
+        
+        return 0
+    else
+        print_error "❌ Automatic recovery failed after $max_attempts attempts"
+        print_info "Recovery details logged to: $recovery_log"
+        log_message "RECOVERY" "Automatic recovery failed for $error_type after $max_attempts attempts" "$context"
+        
+        # Provide next steps
+        echo ""
+        print_info "Next steps:"
+        echo "1. Review recovery log: $recovery_log"
+        echo "2. Run comprehensive diagnostics: $0 diagnostic"
+        echo "3. Check service logs: docker-compose logs $context"
+        echo "4. Consider manual recovery steps"
+        
+        return 1
+    fi
+}
+
+# Enhanced Docker recovery function
+attempt_docker_recovery() {
+    print_status "Attempting Docker recovery..."
+    
+    # Check if Docker is installed
+    if ! command -v docker >/dev/null 2>&1; then
+        print_error "Docker is not installed. Please install Docker Desktop."
+        return 1
+    fi
+    
+    # Try to start Docker if it's not running
+    print_info "Checking Docker status..."
+    if ! docker info >/dev/null 2>&1; then
+        print_info "Docker is not running. Attempting to start..."
+        
+        # On macOS, try to start Docker Desktop
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            if [[ -d "/Applications/Docker.app" ]]; then
+                print_info "Starting Docker Desktop..."
+                open -a Docker
+                
+                # Wait for Docker to start
+                local wait_time=0
+                local max_wait=120
+                
+                while [[ $wait_time -lt $max_wait ]]; do
+                    if docker info >/dev/null 2>&1; then
+                        print_success "Docker started successfully"
+                        return 0
+                    fi
+                    
+                    print_info "Waiting for Docker to start... ($wait_time/${max_wait}s)"
+                    sleep 5
+                    wait_time=$((wait_time + 5))
+                done
+                
+                print_error "Docker failed to start within ${max_wait}s"
+                return 1
+            else
+                print_error "Docker Desktop not found in /Applications/"
+                return 1
+            fi
+        else
+            # On Linux, try to start Docker service
+            print_info "Attempting to start Docker service..."
+            if sudo systemctl start docker 2>/dev/null; then
+                sleep 5
+                if docker info >/dev/null 2>&1; then
+                    print_success "Docker service started successfully"
+                    return 0
+                fi
+            fi
+            
+            print_error "Failed to start Docker service"
+            return 1
+        fi
+    else
+        print_success "Docker is already running"
+        return 0
+    fi
+}
+
+# Enhanced port conflict recovery
+attempt_port_conflict_recovery() {
+    local service="$1"
+    local service_port=$(get_service_port "$service")
+    
+    print_status "Attempting port conflict recovery for $service (port $service_port)..."
+    
+    # Find process using the port
+    local process_info=$(lsof -ti:$service_port 2>/dev/null)
+    
+    if [[ -n "$process_info" ]]; then
+        local process_name=$(ps -p $process_info -o comm= 2>/dev/null || echo "unknown")
+        print_info "Port $service_port is occupied by $process_name (PID: $process_info)"
+        
+        # Check if it's our own service
+        if docker ps --format "{{.Names}}" | grep -q "$service" 2>/dev/null; then
+            print_info "Port is occupied by our own service. Restarting..."
+            docker-compose restart "$service" 2>/dev/null
+            sleep 5
+            
+            if ! lsof -ti:$service_port >/dev/null 2>&1; then
+                print_success "Port conflict resolved by restarting service"
+                return 0
+            fi
+        fi
+        
+        # Ask user if they want to kill the process
+        print_warning "Would you like to stop the conflicting process? (y/N)"
+        if [[ "${AUTO_RECOVERY:-false}" == "true" ]]; then
+            print_info "Auto-recovery mode: stopping conflicting process"
+            if kill $process_info 2>/dev/null; then
+                sleep 2
+                print_success "Conflicting process stopped"
+                return 0
+            fi
+        fi
+    else
+        print_info "No process found using port $service_port"
+        return 0
+    fi
+    
+    print_error "Port conflict recovery failed"
+    return 1
+}
+
+# Enhanced service recovery function
+attempt_service_recovery() {
+    local service="$1"
+    
+    print_status "Attempting service recovery for: $service"
+    
+    # Check service dependencies first
+    local dependencies=$(get_service_dependencies "$service")
+    if [[ -n "$dependencies" ]]; then
+        print_info "Checking dependencies: $dependencies"
+        
+        for dep in $dependencies; do
+            local dep_status=$(get_service_status "$dep")
+            if [[ "$dep_status" != "healthy" ]] && [[ "$dep_status" != "running" ]]; then
+                print_info "Starting dependency: $dep"
+                docker-compose up -d "$dep" 2>/dev/null
+                
+                if ! wait_for_service_health "$dep" 60; then
+                    print_error "Failed to start dependency: $dep"
+                    return 1
+                fi
+            fi
+        done
+    fi
+    
+    # Stop and remove the service container
+    print_info "Stopping and removing $service container..."
+    docker-compose stop "$service" 2>/dev/null
+    docker-compose rm -f "$service" 2>/dev/null
+    
+    # Start the service
+    print_info "Starting $service..."
+    if docker-compose up -d "$service" 2>/dev/null; then
+        print_info "Service started, waiting for health check..."
+        
+        if wait_for_service_health "$service" 120; then
+            print_success "Service recovery successful for $service"
+            return 0
+        fi
+    fi
+    
+    print_error "Service recovery failed for $service"
+    return 1
+}
+
+# Enhanced disk cleanup recovery
+attempt_disk_cleanup_recovery() {
+    print_status "Attempting disk cleanup recovery..."
+    
+    local initial_usage=$(df . | tail -1 | awk '{print $5}' | sed 's/%//')
+    print_info "Initial disk usage: ${initial_usage}%"
+    
+    # Clean Docker resources
+    print_info "Cleaning Docker resources..."
+    
+    # Remove stopped containers
+    local stopped_containers=$(docker ps -aq --filter "status=exited" 2>/dev/null)
+    if [[ -n "$stopped_containers" ]]; then
+        print_info "Removing stopped containers..."
+        docker rm $stopped_containers 2>/dev/null || true
+    fi
+    
+    # Remove unused images
+    print_info "Removing unused Docker images..."
+    docker image prune -f 2>/dev/null || true
+    
+    # Remove unused volumes
+    print_info "Removing unused Docker volumes..."
+    docker volume prune -f 2>/dev/null || true
+    
+    # Remove unused networks
+    print_info "Removing unused Docker networks..."
+    docker network prune -f 2>/dev/null || true
+    
+    # Clean build cache
+    print_info "Cleaning Docker build cache..."
+    docker builder prune -f 2>/dev/null || true
+    
+    # Check if cleanup was effective
+    local final_usage=$(df . | tail -1 | awk '{print $5}' | sed 's/%//')
+    local space_freed=$((initial_usage - final_usage))
+    
+    print_info "Final disk usage: ${final_usage}%"
+    print_info "Space freed: ${space_freed}%"
+    
+    if [[ $final_usage -lt 85 ]]; then
+        print_success "Disk cleanup recovery successful"
+        return 0
+    else
+        print_error "Disk cleanup recovery insufficient"
+        return 1
+    fi
+}
+
+# Network recovery function
+attempt_network_recovery() {
+    print_status "Attempting network recovery..."
+    
+    # Test basic connectivity
+    print_info "Testing DNS resolution..."
+    if ! nslookup google.com >/dev/null 2>&1; then
+        print_error "DNS resolution failed"
+        return 1
+    fi
+    
+    print_info "Testing internet connectivity..."
+    if ! timeout 10 bash -c "</dev/tcp/google.com/80" 2>/dev/null; then
+        print_error "Internet connectivity failed"
+        return 1
+    fi
+    
+    # Restart Docker networks
+    print_info "Restarting Docker networks..."
+    docker network prune -f 2>/dev/null || true
+    
+    # Restart Docker daemon if needed
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+        print_info "Restarting Docker daemon..."
+        sudo systemctl restart docker 2>/dev/null || true
+        sleep 10
+    fi
+    
+    print_success "Network recovery completed"
+    return 0
+}
+
+# Configuration recovery function
+attempt_config_recovery() {
+    local context="$1"
+    
+    print_status "Attempting configuration recovery for: $context"
+    
+    # Validate docker-compose.yml
+    if [[ ! -f "docker-compose.yml" ]]; then
+        print_error "docker-compose.yml not found"
+        return 1
+    fi
+    
+    print_info "Validating docker-compose.yml..."
+    if ! docker-compose config >/dev/null 2>&1; then
+        print_error "docker-compose.yml has syntax errors"
+        return 1
+    fi
+    
+    # Check .env file
+    if [[ ! -f ".env" ]] && [[ -f ".env.example" ]]; then
+        print_info "Creating .env from .env.example..."
+        cp ".env.example" ".env"
+    fi
+    
+    print_success "Configuration recovery completed"
+    return 0
+}
+
+# Enhanced health check recovery function
+attempt_health_check_recovery() {
+    local service="$1"
+    
+    print_status "Attempting health check recovery for service: $service"
+    
+    # First, try restarting the service
+    print_info "Restarting $service to recover health check..."
+    if docker-compose restart "$service" 2>/dev/null; then
+        print_info "Service restarted, waiting for health check..."
+        
+        if wait_for_service_health "$service" 30; then
+            print_success "Health check recovery successful for $service"
+            return 0
+        fi
+    fi
+    
+    # If restart didn't work, try recreating the container
+    print_info "Recreating container for $service..."
+    docker-compose stop "$service" 2>/dev/null
+    docker-compose rm -f "$service" 2>/dev/null
+    
+    if docker-compose up -d "$service" 2>/dev/null; then
+        print_info "Container recreated, waiting for health check..."
+        
+        if wait_for_service_health "$service" 60; then
+            print_success "Health check recovery successful for $service after container recreation"
+            return 0
+        fi
+    fi
+    
+    print_error "Health check recovery failed for $service"
+    return 1
+}
+
+# Dependency recovery function
+attempt_dependency_recovery() {
+    local service="$1"
+    
+    print_status "Attempting dependency recovery for service: $service"
+    
+    local dependencies=$(get_service_dependencies "$service")
+    if [[ -z "$dependencies" ]]; then
+        print_info "No dependencies found for $service"
+        return 0
+    fi
+    
+    print_info "Starting dependencies in order: $dependencies"
+    
+    for dep in $dependencies; do
+        print_info "Starting dependency: $dep"
+        
+        if ! docker-compose up -d "$dep" 2>/dev/null; then
+            print_error "Failed to start dependency: $dep"
+            return 1
+        fi
+        
+        if ! wait_for_service_health "$dep" 60; then
+            print_error "Dependency $dep failed health check"
+            return 1
+        fi
+        
+        print_success "Dependency $dep is healthy"
+    done
+    
+    print_success "All dependencies recovered successfully"
+    return 0
+}
+
+# Container crash recovery function
+attempt_container_crash_recovery() {
+    local service="$1"
+    
+    print_status "Attempting container crash recovery for: $service"
+    
+    # Get container logs before cleanup
+    print_info "Collecting crash logs..."
+    local crash_log="$LOG_DIR/crash-${service}-$(date +%Y%m%d-%H%M%S).log"
+    docker-compose logs --tail=100 "$service" > "$crash_log" 2>/dev/null || true
+    
+    # Remove crashed container
+    print_info "Removing crashed container..."
+    docker-compose stop "$service" 2>/dev/null || true
+    docker-compose rm -f "$service" 2>/dev/null || true
+    
+    # Start fresh container
+    print_info "Starting fresh container..."
+    if docker-compose up -d "$service" 2>/dev/null; then
+        if wait_for_service_health "$service" 120; then
+            print_success "Container crash recovery successful for $service"
+            print_info "Crash logs saved to: $crash_log"
+            return 0
+        fi
+    fi
+    
+    print_error "Container crash recovery failed for $service"
+    return 1
+}
+
+# Resource limit recovery function
+attempt_resource_limit_recovery() {
+    local service="$1"
+    
+    print_status "Attempting resource limit recovery for: $service"
+    
+    # Check current resource usage
+    local container_name="devflow-${service}-1"
+    local actual_container=$(docker ps --format "{{.Names}}" | grep -E "${service}|${container_name}" | head -1)
+    
+    if [[ -n "$actual_container" ]]; then
+        print_info "Checking resource usage for $actual_container..."
+        
+        # Get container stats
+        local stats=$(docker stats --no-stream --format "{{.CPUPerc}}\t{{.MemUsage}}" "$actual_container" 2>/dev/null)
+        
+        if [[ -n "$stats" ]]; then
+            local cpu=$(echo "$stats" | awk '{print $1}' | sed 's/%//')
+            local memory=$(echo "$stats" | awk '{print $2}')
+            
+            print_info "Current usage - CPU: ${cpu}%, Memory: $memory"
+            
+            # If CPU usage is very high, restart the service
+            if [[ $(echo "$cpu > 90" | bc -l 2>/dev/null || echo "0") -eq 1 ]]; then
+                print_info "High CPU usage detected, restarting service..."
+                docker-compose restart "$service" 2>/dev/null
+                
+                if wait_for_service_health "$service" 60; then
+                    print_success "Resource limit recovery successful after restart"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+    
+    # Try to free up system resources
+    print_info "Attempting to free up system resources..."
+    
+    # Clean up Docker resources
+    docker system prune -f 2>/dev/null || true
+    
+    print_success "Resource limit recovery completed"
+    return 0
+}
+
+# Enhanced error message generation with detailed recovery suggestions
+generate_detailed_error_message() {
+    local error_type="$1"
+    local context="$2"
+    local additional_info="$3"
+    
+    local error_code=$(get_error_code "$error_type")
+    local error_severity=$(classify_error_severity "$error_type")
+    local recovery_strategy=$(get_recovery_strategy "$error_code")
+    local error_impact=$(assess_error_impact "$error_type" "$context")
+    
+    echo ""
+    print_error "❌ ERROR [$error_code]: $error_type"
+    echo -e "${RED}Severity: $error_severity${NC}"
+    echo -e "${YELLOW}Impact: $error_impact${NC}"
+    
+    if [[ -n "$context" ]]; then
+        echo -e "${CYAN}Context: $context${NC}"
+    fi
+    
+    if [[ -n "$additional_info" ]]; then
+        echo -e "${DIM}Details: $additional_info${NC}"
+    fi
+    
+    echo ""
+    echo -e "${BOLD}${CYAN}🔧 RECOVERY GUIDANCE:${NC}"
+    echo -e "${WHITE}$recovery_strategy${NC}"
+    
+    # Provide specific step-by-step recovery instructions
+    case "$error_code" in
+        "E001")
+            echo ""
+            echo -e "${CYAN}Step-by-step recovery:${NC}"
+            echo "1. Check if Docker Desktop is installed"
+            echo "2. Start Docker Desktop application"
+            echo "3. Wait for Docker to fully initialize"
+            echo "4. Verify with: docker info"
+            echo "5. Re-run this script"
+            ;;
+        "E002")
+            echo ""
+            echo -e "${CYAN}Step-by-step recovery:${NC}"
+            echo "1. Install Docker Desktop from: https://docker.com/products/docker-desktop"
+            echo "2. Install Docker Compose (usually included with Docker Desktop)"
+            echo "3. Restart your terminal/shell"
+            echo "4. Verify installation: docker --version && docker-compose --version"
+            echo "5. Re-run this script"
+            ;;
+        "E004")
+            echo ""
+            echo -e "${CYAN}Step-by-step recovery:${NC}"
+            echo "1. Check service dependencies for $context"
+            echo "2. Start dependency services first"
+            echo "3. Wait for dependencies to be healthy"
+            echo "4. Retry starting $context"
+            echo "5. Check logs: docker-compose logs $context"
+            ;;
+        "E005")
+            echo ""
+            echo -e "${CYAN}Step-by-step recovery:${NC}"
+            echo "1. Check if $context container is running: docker ps"
+            echo "2. Check container logs: docker-compose logs $context"
+            echo "3. Verify health endpoint is accessible"
+            echo "4. Restart service: docker-compose restart $context"
+            echo "5. Monitor health check progress"
+            ;;
+        "E007")
+            echo ""
+            echo -e "${CYAN}Step-by-step recovery:${NC}"
+            local service_port=$(get_service_port "$context")
+            echo "1. Identify process using port $service_port: lsof -ti:$service_port"
+            echo "2. Stop the conflicting process or change service port"
+            echo "3. Update configuration if port was changed"
+            echo "4. Re-run this script"
+            ;;
+        "E012")
+            echo ""
+            echo -e "${CYAN}Step-by-step recovery:${NC}"
+            echo "1. Check disk usage: df -h"
+            echo "2. Clean Docker resources: docker system prune -f"
+            echo "3. Remove unused images: docker image prune -a -f"
+            echo "4. Clear application logs if safe to do so"
+            echo "5. Re-run this script"
+            ;;
+    esac
+    
+    # Show automatic recovery availability
+    local auto_recovery_available=false
+    case "$error_type" in
+        "DOCKER_NOT_RUNNING"|"PORT_CONFLICT"|"SERVICE_START_FAILED"|"DISK_SPACE_LOW"|"NETWORK_UNREACHABLE"|"CONFIG_INVALID"|"SERVICE_HEALTH_FAILED")
+            auto_recovery_available=true
+            ;;
+    esac
+    
+    if [[ "$auto_recovery_available" == "true" ]]; then
+        echo ""
+        echo -e "${GREEN}💡 Automatic recovery is available for this error.${NC}"
+        echo -e "${CYAN}Run: $0 recovery --error-type=$error_type --context=$context${NC}"
+    fi
+    
+    echo ""
+    echo -e "${DIM}For more help, run: $0 diagnostic${NC}"
+    echo -e "${DIM}View logs: tail -f $SCRIPT_LOG${NC}"
+    echo ""
+}
+
+# Enhanced error reporting with structured data and user-friendly display
+generate_structured_error_report() {
+    local error_type="$1"
+    local error_message="$2"
+    local context="$3"
+    local timestamp=$(date +%s)
+    
+    local report_file="$LOG_DIR/structured-error-$(date +%Y%m%d-%H%M%S).json"
+    
+    # Collect comprehensive error context
+    local error_context=$(collect_error_context "$error_type" "$context")
+    local error_severity=$(classify_error_severity "$error_type")
+    local error_impact=$(assess_error_impact "$error_type" "$context")
+    local error_code=$(get_error_code "$error_type")
+    local recovery_strategy=$(get_recovery_strategy "$error_code")
+    
+    # Generate structured JSON report
+    cat > "$report_file" << EOF
+{
+  "error_report": {
+    "metadata": {
+      "timestamp": $timestamp,
+      "report_id": "$(uuidgen 2>/dev/null || echo "report-$timestamp")",
+      "script_version": "$SCRIPT_VERSION",
+      "diagnostic_mode": "${DIAGNOSTIC_MODE:-false}"
+    },
+    "error": {
+      "type": "$error_type",
+      "code": "$error_code",
+      "message": "$error_message",
+      "severity": "$error_severity",
+      "impact": "$error_impact",
+      "context": "$context"
+    },
+    "system_context": {
+$(echo "$error_context" | tr ',' '\n' | sed 's/=/": "/' | sed 's/^/      "/' | sed 's/$/",/' | sed '$s/,$//')
+    },
+    "recovery": {
+      "strategy": "$recovery_strategy",
+      "automatic_recovery_available": $(case "$error_type" in "DOCKER_NOT_RUNNING"|"PORT_CONFLICT"|"SERVICE_START_FAILED"|"DISK_SPACE_LOW"|"NETWORK_UNREACHABLE"|"CONFIG_INVALID"|"SERVICE_HEALTH_FAILED") echo "true" ;; *) echo "false" ;; esac),
+      "manual_steps_required": $(case "$error_severity" in "CRITICAL"|"HIGH") echo "true" ;; *) echo "false" ;; esac)
+    },
+    "diagnostics": {
+      "log_files": [
+        "$SCRIPT_LOG",
+        "$LOG_DIR/error_history.log"
+$(if [[ -f "$LOG_DIR/diagnostic.log" ]]; then echo "        ,\"$LOG_DIR/diagnostic.log\""; fi)
+      ],
+      "relevant_services": [
+$(if [[ -n "$context" ]]; then
+    echo "        \"$context\""
+    local dependent_services=$(get_services_depending_on "$context")
+    if [[ -n "$dependent_services" ]]; then
+        for dep in $dependent_services; do
+            echo "        ,\"$dep\""
+        done
+    fi
+fi)
+      ]
+    }
+  }
+}
+EOF
+    
+    # Also generate user-friendly error message
+    generate_detailed_error_message "$error_type" "$context" "$error_message"
+    
+    # Log to error history
+    echo "$(timestamp) [ERROR] [$error_code] $error_type - $error_message (Context: $context)" >> "$LOG_DIR/error_history.log"
+    
+    echo "$report_file"
+}
+
+# Enhanced diagnostic information collection
+collect_comprehensive_diagnostics() {
+    local service_context="${1:-}"
+    local diagnostic_file="$LOG_DIR/comprehensive-diagnostics-$(date +%Y%m%d-%H%M%S).txt"
+    
+    print_status "Collecting comprehensive diagnostic information..."
+    
+    {
+        echo "DevFlow Comprehensive Diagnostic Report"
+        echo "======================================="
+        echo "Generated: $(date)"
+        echo "Script Version: $SCRIPT_VERSION"
+        echo "Diagnostic Mode: ${DIAGNOSTIC_MODE:-false}"
+        echo ""
+        
+        echo "SYSTEM INFORMATION"
+        echo "------------------"
+        echo "OS: $(uname -a)"
+        echo "Shell: $SHELL"
+        echo "User: $(whoami)"
+        echo "Working Directory: $(pwd)"
+        echo "Script Location: $SCRIPT_DIR"
+        echo ""
+        
+        echo "ENVIRONMENT VARIABLES"
+        echo "--------------------"
+        env | grep -E "(DOCKER|COMPOSE|DEVFLOW|PATH)" | sort
+        echo ""
+        
+        echo "DOCKER INFORMATION"
+        echo "------------------"
+        if command -v docker >/dev/null 2>&1; then
+            echo "Docker Version:"
+            docker --version 2>/dev/null || echo "  Docker version not available"
+            echo ""
+            
+            echo "Docker Info:"
+            if docker info 2>/dev/null; then
+                echo "  Docker is running"
+            else
+                echo "  Docker is not running or not accessible"
+            fi
+            echo ""
+            
+            echo "Docker Compose Version:"
+            docker-compose --version 2>/dev/null || echo "  Docker Compose not available"
+            echo ""
+            
+            echo "Running Containers:"
+            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "  Cannot access Docker containers"
+            echo ""
+            
+            echo "All Containers:"
+            docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.CreatedAt}}" 2>/dev/null || echo "  Cannot access Docker containers"
+            echo ""
+            
+            echo "Docker Images:"
+            docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" 2>/dev/null || echo "  Cannot access Docker images"
+            echo ""
+            
+            echo "Docker Networks:"
+            docker network ls 2>/dev/null || echo "  Cannot access Docker networks"
+            echo ""
+            
+            echo "Docker Volumes:"
+            docker volume ls 2>/dev/null || echo "  Cannot access Docker volumes"
+            echo ""
+        else
+            echo "Docker is not installed or not in PATH"
+        fi
+        
+        echo "SYSTEM RESOURCES"
+        echo "----------------"
+        echo "Disk Usage:"
+        df -h . 2>/dev/null || echo "  Disk usage information not available"
+        echo ""
+        
+        echo "Memory Usage:"
+        if command -v free >/dev/null 2>&1; then
+            free -h
+        elif command -v vm_stat >/dev/null 2>&1; then
+            vm_stat | head -10
+        else
+            echo "  Memory usage information not available"
+        fi
+        echo ""
+        
+        echo "CPU Information:"
+        if command -v nproc >/dev/null 2>&1; then
+            echo "  CPU Cores: $(nproc)"
+        elif command -v sysctl >/dev/null 2>&1; then
+            echo "  CPU Cores: $(sysctl -n hw.ncpu 2>/dev/null || echo 'unknown')"
+        fi
+        echo ""
+        
+        echo "NETWORK CONNECTIVITY"
+        echo "--------------------"
+        echo "Network Interfaces:"
+        if command -v ip >/dev/null 2>&1; then
+            ip addr show 2>/dev/null | grep -E "(inet |UP|DOWN)" || echo "  Network interface information not available"
+        elif command -v ifconfig >/dev/null 2>&1; then
+            ifconfig 2>/dev/null | grep -E "(inet |UP|DOWN)" || echo "  Network interface information not available"
+        fi
+        echo ""
+        
+        echo "DNS Resolution Test:"
+        if nslookup google.com >/dev/null 2>&1; then
+            echo "  DNS resolution: WORKING"
+        else
+            echo "  DNS resolution: FAILED"
+        fi
+        echo ""
+        
+        echo "Internet Connectivity Test:"
+        local connectivity_tests=("google.com:80" "github.com:443" "docker.io:443")
+        for endpoint in "${connectivity_tests[@]}"; do
+            local host=$(echo "$endpoint" | cut -d':' -f1)
+            local port=$(echo "$endpoint" | cut -d':' -f2)
+            
+            if timeout 5 bash -c "</dev/tcp/$host/$port" 2>/dev/null; then
+                echo "  $endpoint: CONNECTED"
+            else
+                echo "  $endpoint: FAILED"
+            fi
+        done
+        echo ""
+        
+        echo "PORT USAGE"
+        echo "----------"
+        echo "DevFlow Required Ports:"
+        for port in "${REQUIRED_PORTS[@]}"; do
+            local process_info=$(lsof -ti:$port 2>/dev/null)
+            if [[ -n "$process_info" ]]; then
+                local process_name=$(ps -p $process_info -o comm= 2>/dev/null || echo "unknown")
+                echo "  Port $port: OCCUPIED by $process_name (PID: $process_info)"
+            else
+                echo "  Port $port: AVAILABLE"
+            fi
+        done
+        echo ""
+        
+        echo "SERVICE STATUS"
+        echo "--------------"
+        local all_services=($INFRASTRUCTURE_SERVICES $APPLICATION_SERVICES $FRONTEND_SERVICES)
+        
+        for service in "${all_services[@]}"; do
+            local status=$(get_service_status "$service")
+            local port=$(get_service_port "$service")
+            local description=$(get_service_description "$service")
+            local dependencies=$(get_service_dependencies "$service")
+            
+            echo "Service: $service"
+            echo "  Description: $description"
+            echo "  Status: $status"
+            echo "  Port: $port"
+            echo "  Dependencies: ${dependencies:-none}"
+            
+            # Check container status
+            local container_name="devflow-${service}-1"
+            local container_status="not_found"
+            if docker ps -a --format "{{.Names}}\t{{.Status}}" | grep -q "$container_name" 2>/dev/null; then
+                container_status=$(docker ps -a --format "{{.Names}}\t{{.Status}}" | grep "$container_name" | awk '{$1=""; print $0}' | sed 's/^ *//')
+            fi
+            echo "  Container Status: $container_status"
+            
+            # Test health check if service is running
+            if [[ "$status" == "healthy" ]] || [[ "$status" == "running" ]]; then
+                local health_command=$(get_health_check_command "$service")
+                if [[ -n "$health_command" ]]; then
+                    if timeout 10 bash -c "$health_command" &>/dev/null; then
+                        echo "  Health Check: PASSED"
+                    else
+                        echo "  Health Check: FAILED"
+                    fi
+                fi
+            fi
+            echo ""
+        done
+        
+        echo "LOG FILES"
+        echo "---------"
+        echo "Available Log Files:"
+        find "$LOG_DIR" -name "*.log" -type f 2>/dev/null | while read -r log_file; do
+            local file_size=$(ls -lh "$log_file" | awk '{print $5}')
+            local file_date=$(ls -l "$log_file" | awk '{print $6, $7, $8}')
+            echo "  $log_file ($file_size, modified: $file_date)"
+        done
+        echo ""
+        
+        if [[ -n "$service_context" ]]; then
+            echo "SERVICE-SPECIFIC DIAGNOSTICS: $service_context"
+            echo "============================================="
+            
+            # Show recent logs for the specific service
+            local service_log="$LOG_DIR/${service_context}.log"
+            if [[ -f "$service_log" ]]; then
+                echo "Recent log entries for $service_context:"
+                tail -20 "$service_log" 2>/dev/null || echo "  Cannot read service log"
+            else
+                echo "No specific log file found for $service_context"
+            fi
+            echo ""
+            
+            # Show Docker logs for the service
+            local container_name="devflow-${service_context}-1"
+            if docker ps -a --format "{{.Names}}" | grep -q "$container_name" 2>/dev/null; then
+                echo "Docker container logs for $service_context:"
+                docker logs --tail=20 "$container_name" 2>/dev/null || echo "  Cannot read container logs"
+            else
+                echo "No Docker container found for $service_context"
+            fi
+            echo ""
+        fi
+        
+        echo "RECENT ERROR HISTORY"
+        echo "--------------------"
+        if [[ -f "$LOG_DIR/error_history.log" ]]; then
+            echo "Last 20 errors:"
+            tail -20 "$LOG_DIR/error_history.log" | while IFS='|' read -r timestamp error_code message recovery context; do
+                echo "[$timestamp] $error_code: $message"
+                if [[ -n "$recovery" ]]; then
+                    echo "  Recovery: $recovery"
+                fi
+                if [[ -n "$context" ]]; then
+                    echo "  Context: $context"
+                fi
+                echo ""
+            done
+        else
+            echo "No error history available"
+        fi
+        
+        echo "DIAGNOSTIC LOG ENTRIES"
+        echo "----------------------"
+        if [[ -f "$LOG_DIR/diagnostic.log" ]]; then
+            echo "Recent diagnostic entries:"
+            tail -30 "$LOG_DIR/diagnostic.log"
+        else
+            echo "No diagnostic log available"
+        fi
+        
+    } > "$diagnostic_file"
+    
+    print_success "Comprehensive diagnostics saved to: $diagnostic_file"
+    echo "$diagnostic_file"
+}
+
+# Enhanced verbose logging mode
+enable_verbose_logging() {
+    export VERBOSE="true"
+    
+    print_info "Verbose logging enabled"
+    log_message "SYSTEM" "Verbose logging mode enabled"
+    
+    # Create verbose log file
+    local verbose_log="$LOG_DIR/verbose-$(date +%Y%m%d-%H%M%S).log"
+    export VERBOSE_LOG="$verbose_log"
+    
+    echo "$(timestamp) [VERBOSE] Verbose logging started" > "$VERBOSE_LOG"
+    print_info "Verbose logs will be saved to: $VERBOSE_LOG"
+}
+
+# Enhanced verbose message logging
+log_verbose() {
+    local component="$1"
+    local message="$2"
+    local data="${3:-}"
+    
+    if [[ "${VERBOSE:-false}" == "true" ]]; then
+        local timestamp=$(timestamp)
+        local log_entry="[$timestamp] [VERBOSE] [$component] $message"
+        
+        if [[ -n "$data" ]]; then
+            log_entry="$log_entry [Data: $data]"
+        fi
+        
+        echo "$log_entry" >> "${VERBOSE_LOG:-$SCRIPT_LOG}"
+        
+        # Also output to console with color
+        echo -e "${DIM}[VERBOSE]${NC} ${CYAN}[$component]${NC} $message"
+        if [[ -n "$data" ]]; then
+            echo -e "${DIM}  Data: $data${NC}"
+        fi
+    fi
+}
+
+# Enhanced error recovery suggestions with priority
+get_prioritized_recovery_suggestions() {
+    local error_type="$1"
+    local context="$2"
+    local suggestions=()
+    
+    case "$error_type" in
+        "DOCKER_NOT_RUNNING")
+            suggestions+=(
+                "HIGH:Start Docker Desktop application"
+                "HIGH:Wait for Docker to fully initialize (may take 1-2 minutes)"
+                "MEDIUM:Restart Docker service if on Linux"
+                "LOW:Reinstall Docker Desktop if repeatedly failing"
+            )
+            ;;
+        "PORT_CONFLICT")
+            suggestions+=(
+                "HIGH:Stop conflicting applications using ports"
+                "HIGH:Use 'lsof -i :PORT' to identify processes"
+                "MEDIUM:Kill specific processes with 'kill PID'"
+                "LOW:Modify DevFlow port configuration"
+            )
+            ;;
+        "SERVICE_START_FAILED")
+            suggestions+=(
+                "HIGH:Check service dependencies are healthy"
+                "HIGH:Review service logs for specific errors"
+                "MEDIUM:Restart the service with 'docker-compose restart $context'"
+                "MEDIUM:Rebuild service container"
+                "LOW:Check system resources (CPU, memory, disk)"
+            )
+            ;;
+        "DISK_SPACE_LOW")
+            suggestions+=(
+                "CRITICAL:Free up disk space immediately"
+                "HIGH:Clean Docker resources with 'docker system prune -a'"
+                "HIGH:Remove unused files and applications"
+                "MEDIUM:Clean log files and temporary data"
+                "LOW:Consider moving to larger storage device"
+            )
+            ;;
+        "NETWORK_UNREACHABLE")
+            suggestions+=(
+                "HIGH:Check internet connection"
+                "HIGH:Test with different network (mobile hotspot)"
+                "MEDIUM:Configure proxy settings if behind firewall"
+                "MEDIUM:Check DNS settings"
+                "LOW:Contact network administrator"
+            )
+            ;;
+        *)
+            suggestions+=(
+                "HIGH:Run diagnostic mode for detailed analysis"
+                "MEDIUM:Check system logs and error reports"
+                "LOW:Contact support with error details"
+            )
+            ;;
+    esac
+    
+    # Sort suggestions by priority and format output
+    printf '%s\n' "${suggestions[@]}" | sort -r | while IFS=':' read -r priority suggestion; do
+        case "$priority" in
+            "CRITICAL") echo -e "  ${RED}🚨 CRITICAL:${NC} $suggestion" ;;
+            "HIGH") echo -e "  ${YELLOW}⚠️  HIGH:${NC} $suggestion" ;;
+            "MEDIUM") echo -e "  ${BLUE}ℹ️  MEDIUM:${NC} $suggestion" ;;
+            "LOW") echo -e "  ${DIM}💡 LOW:${NC} $suggestion" ;;
+        esac
+    done
+}rint_header "🔬 Diagnostic Mode Enabled"
     print_info "Verbose logging and diagnostic information will be displayed"
     print_info "Diagnostic logs will be saved to: $LOG_DIR/diagnostic.log"
     
@@ -479,11 +3083,19 @@ handle_error() {
     local context="${3:-}"
     local auto_recover="${4:-false}"
     
+    # Collect comprehensive error context
+    local error_context=$(collect_error_context "$error_type" "$context")
+    local error_severity=$(classify_error_severity "$error_type")
+    local error_impact=$(assess_error_impact "$error_type" "$context")
     local error_code=$(get_error_code "$error_type")
     local recovery_strategy=$(get_recovery_strategy "$error_code")
     
-    # Log the error with full context
-    log_error_with_recovery "$error_message" "$error_code" "$recovery_strategy" "$context"
+    # Log the error with enhanced context
+    log_error_with_recovery "$error_message" "$error_code" "$recovery_strategy" "$error_context"
+    
+    # Generate structured error report for diagnostic purposes
+    local structured_report=$(generate_structured_error_report "$error_type" "$error_message" "$context")
+    log_diagnostic "ERROR_HANDLING" "Structured error report generated" "report_file=$structured_report"
     
     # Display detailed error information to user
     echo ""
@@ -491,13 +3103,15 @@ handle_error() {
     print_error "ERROR DETECTED: $error_message"
     print_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo -e "${RED}Error Code:${NC} $error_code"
+    echo -e "${RED}Severity:${NC} $error_severity"
+    echo -e "${RED}Impact:${NC} $error_impact"
     echo -e "${RED}Context:${NC} ${context:-'General system error'}"
     echo -e "${RED}Timestamp:${NC} $(timestamp)"
     echo ""
     
-    # Show detailed recovery information
-    echo -e "${CYAN}💡 RECOVERY SUGGESTION:${NC}"
-    echo -e "   $recovery_strategy"
+    # Show prioritized recovery suggestions
+    echo -e "${CYAN}🎯 PRIORITIZED RECOVERY SUGGESTIONS:${NC}"
+    get_prioritized_recovery_suggestions "$error_type" "$context"
     echo ""
     
     # Show additional context-specific information
@@ -508,54 +3122,20 @@ handle_error() {
         echo -e "${YELLOW}🔧 ATTEMPTING AUTOMATIC RECOVERY...${NC}"
         echo ""
         
-        case "$error_type" in
-            "DOCKER_NOT_RUNNING")
-                if attempt_docker_recovery; then
-                    print_success "✅ Automatic recovery successful!"
-                    return 0
-                fi
-                ;;
-            "PORT_CONFLICT")
-                if attempt_port_conflict_recovery; then
-                    print_success "✅ Automatic recovery successful!"
-                    return 0
-                fi
-                ;;
-            "SERVICE_START_FAILED")
-                if attempt_service_recovery "$context"; then
-                    print_success "✅ Automatic recovery successful!"
-                    return 0
-                fi
-                ;;
-            "DISK_SPACE_LOW")
-                if attempt_disk_cleanup_recovery; then
-                    print_success "✅ Automatic recovery successful!"
-                    return 0
-                fi
-                ;;
-            "NETWORK_UNREACHABLE")
-                if attempt_network_recovery; then
-                    print_success "✅ Automatic recovery successful!"
-                    return 0
-                fi
-                ;;
-            "CONFIG_INVALID")
-                if attempt_config_recovery "$context"; then
-                    print_success "✅ Automatic recovery successful!"
-                    return 0
-                fi
-                ;;
-            *)
-                print_warning "❌ No automatic recovery available for error type: $error_type"
-                ;;
-        esac
-        
-        print_error "❌ Automatic recovery failed"
+        # Use enhanced recovery with retry logic
+        if attempt_automatic_recovery_with_retry "$error_type" "$context" 3 5; then
+            print_success "✅ Automatic recovery successful!"
+            log_message "RECOVERY" "Automatic recovery completed successfully" "$error_context"
+            return 0
+        else
+            print_error "❌ Automatic recovery failed after multiple attempts"
+            log_message "RECOVERY" "Automatic recovery failed after multiple attempts" "$error_context"
+        fi
         echo ""
     fi
     
-    # Offer manual recovery options
-    offer_manual_recovery_options "$error_type" "$context"
+    # Offer enhanced manual recovery options
+    offer_enhanced_manual_recovery_options "$error_type" "$context" "$error_severity"
     
     return 1
 }
@@ -838,62 +3418,343 @@ show_error_context_info() {
     echo ""
 }
 
-# Offer manual recovery options to the user
-offer_manual_recovery_options() {
+# Enhanced manual recovery options with guided assistance
+offer_enhanced_manual_recovery_options() {
     local error_type="$1"
     local context="$2"
+    local error_severity="$3"
     
-    echo -e "${YELLOW}🛠️  MANUAL RECOVERY OPTIONS:${NC}"
+    echo -e "${YELLOW}🛠️  ENHANCED MANUAL RECOVERY OPTIONS:${NC}"
     echo ""
     
     case "$error_type" in
         "DOCKER_NOT_RUNNING")
-            echo "1. Start Docker Desktop manually"
-            echo "2. Restart Docker service: 'sudo systemctl restart docker' (Linux)"
-            echo "3. Reinstall Docker Desktop if corrupted"
+            echo "1. 🚀 Start Docker Desktop manually"
+            echo "   • On macOS: Open Applications → Docker"
+            echo "   • On Windows: Start Docker Desktop from Start Menu"
+            echo "   • Wait for Docker whale icon to appear in system tray"
+            echo ""
+            echo "2. 🔄 Restart Docker service (Linux)"
+            echo "   • Run: sudo systemctl restart docker"
+            echo "   • Check status: sudo systemctl status docker"
+            echo ""
+            echo "3. 🔧 Reinstall Docker Desktop"
+            echo "   • Download from: https://docker.com/products/docker-desktop"
+            echo "   • Uninstall current version first"
+            echo ""
             ;;
         "PORT_CONFLICT")
-            echo "1. Stop conflicting applications manually"
-            echo "2. Change DevFlow service ports in docker-compose.yml"
-            echo "3. Use 'sudo lsof -i :PORT' to identify and kill processes"
+            echo "1. 🔍 Identify conflicting processes"
+            echo "   • Run: lsof -i :PORT (replace PORT with actual port)"
+            echo "   • Note the PID of conflicting processes"
+            echo ""
+            echo "2. 🛑 Stop conflicting applications"
+            echo "   • Kill process: kill PID (replace PID with actual process ID)"
+            echo "   • Or stop application gracefully if known"
+            echo ""
+            echo "3. ⚙️  Change DevFlow ports (advanced)"
+            echo "   • Edit docker-compose.yml"
+            echo "   • Modify port mappings for conflicting services"
+            echo ""
             ;;
         "SERVICE_START_FAILED")
-            echo "1. Check service logs: 'docker-compose logs $context'"
-            echo "2. Restart individual service: 'docker-compose restart $context'"
-            echo "3. Rebuild service: 'docker-compose build $context'"
+            echo "1. 📋 Check service logs"
+            echo "   • Run: docker-compose logs $context"
+            echo "   • Look for specific error messages"
+            echo ""
+            echo "2. 🔄 Restart service"
+            echo "   • Run: docker-compose restart $context"
+            echo "   • Wait for service to become healthy"
+            echo ""
+            echo "3. 🔨 Rebuild service container"
+            echo "   • Run: docker-compose build $context"
+            echo "   • Then: docker-compose up -d $context"
+            echo ""
+            echo "4. 🔍 Check dependencies"
+            local dependencies=$(get_service_dependencies "$context")
+            if [[ -n "$dependencies" ]]; then
+                echo "   • Ensure these services are healthy: $dependencies"
+                echo "   • Restart dependencies if needed"
+            fi
+            echo ""
             ;;
         "DISK_SPACE_LOW")
-            echo "1. Free up disk space manually"
-            echo "2. Clean Docker: 'docker system prune -a'"
-            echo "3. Remove unused files and applications"
+            echo "1. 🧹 Clean Docker resources"
+            echo "   • Run: docker system prune -a"
+            echo "   • This removes unused images, containers, networks"
+            echo ""
+            echo "2. 📁 Free up disk space"
+            echo "   • Empty trash/recycle bin"
+            echo "   • Remove large unused files"
+            echo "   • Clean downloads folder"
+            echo ""
+            echo "3. 📊 Check disk usage"
+            echo "   • Run: df -h (Linux/macOS) or dir (Windows)"
+            echo "   • Identify largest directories"
+            echo ""
             ;;
         "NETWORK_UNREACHABLE")
-            echo "1. Check internet connection"
-            echo "2. Configure proxy settings if behind corporate firewall"
-            echo "3. Try using mobile hotspot temporarily"
+            echo "1. 🌐 Test internet connection"
+            echo "   • Try browsing to google.com"
+            echo "   • Test with different device on same network"
+            echo ""
+            echo "2. 📡 Try alternative network"
+            echo "   • Use mobile hotspot temporarily"
+            echo "   • Connect to different WiFi network"
+            echo ""
+            echo "3. 🔧 Configure network settings"
+            echo "   • Check proxy settings if in corporate environment"
+            echo "   • Verify DNS settings (try 8.8.8.8 or 1.1.1.1)"
+            echo ""
             ;;
         *)
-            echo "1. Run with diagnostic mode: '$0 start --diagnostic'"
-            echo "2. Check system logs and error reports"
-            echo "3. Contact support with error details"
+            echo "1. 🔬 Run comprehensive diagnostics"
+            echo "   • Run: $0 start --diagnostic"
+            echo "   • Review generated diagnostic report"
+            echo ""
+            echo "2. 📊 Generate error report"
+            echo "   • Collect system information"
+            echo "   • Review log files for patterns"
+            echo ""
+            echo "3. 💬 Get additional help"
+            echo "   • Check documentation for similar issues"
+            echo "   • Contact support with error details"
+            echo ""
+            ;;
+    esac
+    
+    # Offer guided recovery assistance
+    echo -e "${CYAN}🎯 GUIDED RECOVERY ASSISTANCE:${NC}"
+    echo ""
+    echo "a) 🔧 Try guided automatic recovery"
+    echo "b) 📋 Generate comprehensive diagnostic report"
+    echo "c) 🔍 Run specific troubleshooting commands"
+    echo "d) 📞 Get help with manual recovery steps"
+    echo "e) ⏭️  Skip and continue"
+    echo ""
+    
+    echo -n -e "${CYAN}Choose an option [a-e]: ${NC}"
+    read -r recovery_choice
+    
+    case "$recovery_choice" in
+        "a"|"A")
+            print_info "Starting guided automatic recovery..."
+            if attempt_automatic_recovery_with_retry "$error_type" "$context" 3 5; then
+                print_success "✅ Guided recovery successful!"
+                return 0
+            else
+                print_warning "Guided recovery failed. Try manual options above."
+            fi
+            ;;
+        "b"|"B")
+            print_info "Generating comprehensive diagnostic report..."
+            local diagnostic_file=$(collect_comprehensive_diagnostics "$context")
+            print_success "Diagnostic report saved to: $diagnostic_file"
+            echo ""
+            echo -n -e "${CYAN}Would you like to view the diagnostic report? [y/N]: ${NC}"
+            read -r view_diagnostics
+            if [[ "$view_diagnostics" =~ ^[Yy] ]]; then
+                less "$diagnostic_file"
+            fi
+            ;;
+        "c"|"C")
+            print_info "Running troubleshooting commands..."
+            run_troubleshooting_commands "$error_type" "$context"
+            ;;
+        "d"|"D")
+            print_info "Providing detailed recovery guidance..."
+            provide_recovery_guidance "$error_type" "$context"
+            ;;
+        "e"|"E"|"")
+            print_info "Skipping manual recovery options"
+            ;;
+        *)
+            print_warning "Invalid option selected. Skipping recovery assistance."
+            ;;
+    esac
+}
+
+# Run specific troubleshooting commands based on error type
+run_troubleshooting_commands() {
+    local error_type="$1"
+    local context="$2"
+    
+    print_header "🔍 Running Troubleshooting Commands"
+    
+    case "$error_type" in
+        "DOCKER_NOT_RUNNING")
+            print_info "Checking Docker status..."
+            echo "Docker version:"
+            docker --version 2>/dev/null || echo "  Docker not found in PATH"
+            echo ""
+            
+            echo "Docker info:"
+            if docker info 2>/dev/null; then
+                echo "  Docker is running"
+            else
+                echo "  Docker is not running or not accessible"
+            fi
+            echo ""
+            ;;
+        "PORT_CONFLICT")
+            print_info "Checking port usage..."
+            for port in "${REQUIRED_PORTS[@]}"; do
+                echo "Port $port:"
+                local process_info=$(lsof -ti:$port 2>/dev/null)
+                if [[ -n "$process_info" ]]; then
+                    local process_details=$(ps -p $process_info -o pid,ppid,comm,args 2>/dev/null)
+                    echo "$process_details"
+                else
+                    echo "  Available"
+                fi
+                echo ""
+            done
+            ;;
+        "SERVICE_START_FAILED")
+            if [[ -n "$context" ]]; then
+                print_info "Checking service: $context"
+                echo "Container status:"
+                docker ps -a | grep "$context" || echo "  No container found"
+                echo ""
+                
+                echo "Recent logs:"
+                docker-compose logs --tail=10 "$context" 2>/dev/null || echo "  Cannot access logs"
+                echo ""
+                
+                echo "Service dependencies:"
+                local dependencies=$(get_service_dependencies "$context")
+                if [[ -n "$dependencies" ]]; then
+                    for dep in $dependencies; do
+                        local dep_status=$(get_service_status "$dep")
+                        echo "  $dep: $dep_status"
+                    done
+                else
+                    echo "  No dependencies"
+                fi
+            fi
+            ;;
+        "DISK_SPACE_LOW")
+            print_info "Checking disk usage..."
+            echo "Current disk usage:"
+            df -h . 2>/dev/null || echo "  Cannot check disk usage"
+            echo ""
+            
+            echo "Docker system usage:"
+            docker system df 2>/dev/null || echo "  Cannot check Docker usage"
+            echo ""
+            ;;
+        "NETWORK_UNREACHABLE")
+            print_info "Testing network connectivity..."
+            local test_hosts=("google.com" "github.com" "docker.io")
+            
+            for host in "${test_hosts[@]}"; do
+                echo "Testing $host:"
+                if timeout 5 ping -c 1 "$host" >/dev/null 2>&1; then
+                    echo "  ✅ Reachable"
+                else
+                    echo "  ❌ Unreachable"
+                fi
+            done
+            echo ""
+            
+            echo "DNS resolution test:"
+            if nslookup google.com >/dev/null 2>&1; then
+                echo "  ✅ DNS working"
+            else
+                echo "  ❌ DNS failed"
+            fi
             ;;
     esac
     
     echo ""
-    echo -n -e "${CYAN}Would you like to try a manual recovery option? [y/N]: ${NC}"
-    read -r manual_recovery
+    echo -n -e "${CYAN}Press Enter to continue...${NC}"
+    read -r
+}
+
+# Provide detailed recovery guidance
+provide_recovery_guidance() {
+    local error_type="$1"
+    local context="$2"
     
-    if [[ "$manual_recovery" =~ ^[Yy] ]]; then
-        echo -n -e "${CYAN}Enter option number (or 'skip' to continue): ${NC}"
-        read -r option_choice
-        
-        if [[ "$option_choice" != "skip" ]]; then
-            print_info "Please follow the manual recovery steps above and then retry the operation"
+    print_header "📖 Detailed Recovery Guidance"
+    
+    echo -e "${CYAN}Step-by-step recovery process for: $error_type${NC}"
+    echo ""
+    
+    case "$error_type" in
+        "DOCKER_NOT_RUNNING")
+            echo "🔧 Docker Recovery Steps:"
             echo ""
-            echo -n -e "${CYAN}Press Enter when ready to continue...${NC}"
-            read -r
-        fi
-    fi
+            echo "Step 1: Check if Docker Desktop is installed"
+            echo "  • Look for Docker Desktop in Applications (macOS) or Programs (Windows)"
+            echo "  • If not installed, download from https://docker.com/products/docker-desktop"
+            echo ""
+            echo "Step 2: Start Docker Desktop"
+            echo "  • Double-click Docker Desktop icon"
+            echo "  • Wait for initialization (may take 1-2 minutes)"
+            echo "  • Look for Docker whale icon in system tray/menu bar"
+            echo ""
+            echo "Step 3: Verify Docker is running"
+            echo "  • Open terminal/command prompt"
+            echo "  • Run: docker --version"
+            echo "  • Run: docker info"
+            echo "  • Both commands should work without errors"
+            echo ""
+            echo "Step 4: If still not working"
+            echo "  • Restart your computer"
+            echo "  • Check Docker Desktop settings"
+            echo "  • Try reinstalling Docker Desktop"
+            ;;
+        "SERVICE_START_FAILED")
+            echo "🔧 Service Recovery Steps:"
+            echo ""
+            echo "Step 1: Identify the problem"
+            echo "  • Run: docker-compose logs $context"
+            echo "  • Look for error messages in the output"
+            echo "  • Note any specific error codes or messages"
+            echo ""
+            echo "Step 2: Check dependencies"
+            local dependencies=$(get_service_dependencies "$context")
+            if [[ -n "$dependencies" ]]; then
+                echo "  • Ensure these services are running: $dependencies"
+                echo "  • Check their health status"
+                echo "  • Start dependencies first if needed"
+            else
+                echo "  • This service has no dependencies"
+            fi
+            echo ""
+            echo "Step 3: Restart the service"
+            echo "  • Run: docker-compose stop $context"
+            echo "  • Run: docker-compose rm -f $context"
+            echo "  • Run: docker-compose up -d $context"
+            echo ""
+            echo "Step 4: Monitor startup"
+            echo "  • Run: docker-compose logs -f $context"
+            echo "  • Watch for successful startup messages"
+            echo "  • Wait for health checks to pass"
+            ;;
+        *)
+            echo "General recovery guidance:"
+            echo "1. Identify the root cause"
+            echo "2. Check system resources"
+            echo "3. Review error logs"
+            echo "4. Apply appropriate fixes"
+            echo "5. Test the solution"
+            echo "6. Monitor for recurrence"
+            ;;
+    esac
+    
+    echo ""
+    echo -e "${YELLOW}💡 Pro Tips:${NC}"
+    echo "• Always check logs first for specific error messages"
+    echo "• Ensure system requirements are met"
+    echo "• Keep Docker Desktop updated"
+    echo "• Monitor system resources (CPU, memory, disk)"
+    echo "• Use diagnostic mode for complex issues"
+    
+    echo ""
+    echo -n -e "${CYAN}Press Enter to continue...${NC}"
+    read -r
 }
 
 # Enhanced diagnostic mode with comprehensive system analysis
@@ -1120,11 +3981,14 @@ run_comprehensive_diagnostics() {
     return 0
 }
 
-# Enhanced service startup with error handling
+# Enhanced service startup with error handling and performance tracking
 start_service_with_error_handling() {
     local service="$1"
     local max_retries="${2:-3}"
     local retry_delay="${3:-5}"
+    
+    # Record startup start time for performance tracking
+    local startup_start_time=$(date +%s)
     
     log_diagnostic "SERVICE_START" "Starting service $service with error handling" "max_retries=$max_retries, retry_delay=$retry_delay"
     
@@ -1140,20 +4004,36 @@ start_service_with_error_handling() {
                     
                     # Try to start the dependency
                     if ! start_service_with_error_handling "$dep" 2 3; then
+                        # Record failed startup
+                        local startup_end_time=$(date +%s)
+                        record_service_startup_metrics "$service" "$startup_start_time" "$startup_end_time" "dependency_failed" "$attempt"
                         return 1
                     fi
                 fi
             done
         fi
         
+        # Record service start time
+        local service_start_time=$(date +%s)
+        
         # Start the service
         if docker-compose up -d "$service" 2>/dev/null; then
-            set_service_start_time "$service" "$(date +%s)"
+            set_service_start_time "$service" "$service_start_time"
             
-            # Wait for health check
-            if wait_for_service_health "$service" 90; then
+            # Wait for health check with performance tracking
+            if wait_for_service_health_with_metrics "$service" 90; then
+                local startup_end_time=$(date +%s)
+                
                 print_success "Service $service started successfully"
                 log_message "SUCCESS" "Service $service started on attempt $attempt"
+                
+                # Record successful startup metrics
+                record_service_startup_metrics "$service" "$startup_start_time" "$startup_end_time" "healthy" "$attempt"
+                
+                # Record initial resource metrics
+                sleep 2  # Give container a moment to stabilize
+                record_resource_metrics "$service"
+                
                 return 0
             else
                 handle_error "SERVICE_HEALTH_FAILED" "Service $service failed health check on attempt $attempt" "$service" false
@@ -1173,7 +4053,10 @@ start_service_with_error_handling() {
         fi
     done
     
-    # All attempts failed
+    # All attempts failed - record failure metrics
+    local startup_end_time=$(date +%s)
+    record_service_startup_metrics "$service" "$startup_start_time" "$startup_end_time" "failed" "$max_retries"
+    
     handle_error "SERVICE_START_FAILED" "Service $service failed to start after $max_retries attempts" "$service" true
     return 1
 }
@@ -1666,7 +4549,7 @@ wait_for_service_health() {
         
         if [[ $elapsed -gt $timeout ]]; then
             print_error "Service $service failed to become healthy within ${timeout}s"
-            SERVICE_STATUS["$service"]="timeout"
+            set_service_status "$service" "timeout"
             return 1
         fi
         
@@ -1679,6 +4562,54 @@ wait_for_service_health() {
         # Show progress
         local remaining=$((timeout - elapsed))
         echo -n -e "\r${BLUE}Waiting for $service${NC} (${remaining}s remaining) ${YELLOW}⏳${NC}"
+        
+        sleep $HEALTH_CHECK_INTERVAL
+    done
+}
+
+# Wait for service to become healthy with performance metrics
+wait_for_service_health_with_metrics() {
+    local service="$1"
+    local timeout="${2:-$HEALTH_CHECK_TIMEOUT}"
+    local start_time=$(date +%s)
+    local health_check_count=0
+    
+    print_status "Waiting for $service to become healthy..."
+    
+    while true; do
+        local current_time=$(date +%s)
+        local elapsed=$((current_time - start_time))
+        ((health_check_count++))
+        
+        if [[ $elapsed -gt $timeout ]]; then
+            print_error "Service $service failed to become healthy within ${timeout}s"
+            set_service_status "$service" "timeout"
+            
+            # Log performance metrics for timeout
+            echo "$(timestamp) [HEALTH_CHECK] Service: $service, Status: timeout, Duration: ${elapsed}s, Checks: $health_check_count" >> "$PERFORMANCE_LOG"
+            
+            return 1
+        fi
+        
+        # Record health check attempt time
+        local check_start=$(date +%s%N)
+        
+        if check_service_health "$service"; then
+            local check_end=$(date +%s%N)
+            local check_duration=$(( (check_end - check_start) / 1000000 ))  # Convert to milliseconds
+            local health_time=$((current_time - start_time))
+            
+            print_success "Service $service is healthy (${health_time}s)"
+            
+            # Log detailed health check performance
+            echo "$(timestamp) [HEALTH_CHECK] Service: $service, Status: healthy, Duration: ${health_time}s, Checks: $health_check_count, Last_Check_Time: ${check_duration}ms" >> "$PERFORMANCE_LOG"
+            
+            return 0
+        fi
+        
+        # Show progress with performance info
+        local remaining=$((timeout - elapsed))
+        echo -n -e "\r${BLUE}Waiting for $service${NC} (${remaining}s remaining, check #$health_check_count) ${YELLOW}⏳${NC}"
         
         sleep $HEALTH_CHECK_INTERVAL
     done
@@ -1861,37 +4792,119 @@ start_frontend_services() {
     fi
 }
 
-# Orchestrate complete service startup
+# Orchestrate complete service startup with performance tracking
 start_all_services() {
-    print_header "🚀 Starting DevFlow Services"
+    print_header "🚀 Starting DevFlow Services with Performance Monitoring"
     
-    local start_time=$(date +%s)
+    local overall_start_time=$(date +%s)
+    local infra_start_time=0
+    local app_start_time=0
+    local frontend_start_time=0
+    
+    # Record overall startup start
+    echo "$(timestamp) [STARTUP] Overall platform startup initiated" >> "$PERFORMANCE_LOG"
     
     # Start services in order: infrastructure -> application -> frontend
-    if start_infrastructure_services && start_application_services && start_frontend_services; then
-        local end_time=$(date +%s)
-        local total_time=$((end_time - start_time))
+    print_status "Phase 1: Starting infrastructure services..."
+    infra_start_time=$(date +%s)
+    local infra_success=false
+    
+    if start_infrastructure_services; then
+        local infra_end_time=$(date +%s)
+        local infra_duration=$((infra_end_time - infra_start_time))
+        infra_success=true
         
-        echo ""
-        print_success "🎉 All DevFlow services started successfully!"
-        print_info "Total startup time: ${total_time}s"
+        print_success "✅ Infrastructure services started (${infra_duration}s)"
+        echo "$(timestamp) [STARTUP] Infrastructure phase completed in ${infra_duration}s" >> "$PERFORMANCE_LOG"
         
-        # Show service summary
-        show_service_summary
+        print_status "Phase 2: Starting application services..."
+        app_start_time=$(date +%s)
         
-        echo ""
-        print_info "Starting real-time dashboard in 3 seconds..."
-        print_info "Press Ctrl+C to exit dashboard and return to terminal"
-        sleep 3
-        
-        # Launch real-time dashboard
-        show_realtime_dashboard
-        return 0
+        if start_application_services; then
+            local app_end_time=$(date +%s)
+            local app_duration=$((app_end_time - app_start_time))
+            
+            print_success "✅ Application services started (${app_duration}s)"
+            echo "$(timestamp) [STARTUP] Application phase completed in ${app_duration}s" >> "$PERFORMANCE_LOG"
+            
+            print_status "Phase 3: Starting frontend services..."
+            frontend_start_time=$(date +%s)
+            
+            if start_frontend_services; then
+                local frontend_end_time=$(date +%s)
+                local frontend_duration=$((frontend_end_time - frontend_start_time))
+                local overall_end_time=$(date +%s)
+                local total_time=$((overall_end_time - overall_start_time))
+                
+                print_success "✅ Frontend services started (${frontend_duration}s)"
+                echo "$(timestamp) [STARTUP] Frontend phase completed in ${frontend_duration}s" >> "$PERFORMANCE_LOG"
+                
+                echo ""
+                print_success "🎉 All DevFlow services started successfully!"
+                
+                # Display detailed performance summary
+                echo ""
+                print_header "📊 Startup Performance Summary"
+                echo -e "${BOLD}Phase Breakdown:${NC}"
+                echo -e "  Infrastructure: ${infra_duration}s"
+                echo -e "  Application:    ${app_duration}s"
+                echo -e "  Frontend:       ${frontend_duration}s"
+                echo -e "  ${BOLD}Total Time:     ${total_time}s${NC}"
+                
+                # Record overall performance metrics
+                echo "overall_startup:$(date +%s):total_time=$total_time:infra_time=$infra_duration:app_time=$app_duration:frontend_time=$frontend_duration:status=success" >> "$STARTUP_METRICS_FILE"
+                echo "$(timestamp) [STARTUP] Overall platform startup completed successfully in ${total_time}s" >> "$PERFORMANCE_LOG"
+                
+                # Show service summary with performance info
+                show_service_summary_with_performance
+                
+                # Offer performance analysis
+                echo ""
+                echo -n -e "${CYAN}Would you like to see detailed performance analysis? [y/N]: ${NC}"
+                read -r show_analysis
+                
+                if [[ "$show_analysis" =~ ^[Yy] ]]; then
+                    echo ""
+                    get_startup_statistics
+                fi
+                
+                echo ""
+                print_info "Starting real-time dashboard in 3 seconds..."
+                print_info "Press Ctrl+C to exit dashboard and return to terminal"
+                sleep 3
+                
+                # Launch real-time dashboard
+                show_realtime_dashboard
+                return 0
+            else
+                local frontend_end_time=$(date +%s)
+                local frontend_duration=$((frontend_end_time - frontend_start_time))
+                echo "$(timestamp) [STARTUP] Frontend phase failed after ${frontend_duration}s" >> "$PERFORMANCE_LOG"
+            fi
+        else
+            local app_end_time=$(date +%s)
+            local app_duration=$((app_end_time - app_start_time))
+            echo "$(timestamp) [STARTUP] Application phase failed after ${app_duration}s" >> "$PERFORMANCE_LOG"
+        fi
     else
-        print_error "Failed to start all services"
-        print_info "Run '$0 status' to check service health"
-        return 1
+        local infra_end_time=$(date +%s)
+        local infra_duration=$((infra_end_time - infra_start_time))
+        echo "$(timestamp) [STARTUP] Infrastructure phase failed after ${infra_duration}s" >> "$PERFORMANCE_LOG"
     fi
+    
+    # Record failed startup
+    local overall_end_time=$(date +%s)
+    local total_time=$((overall_end_time - overall_start_time))
+    
+    echo "overall_startup:$(date +%s):total_time=$total_time:status=failed" >> "$STARTUP_METRICS_FILE"
+    echo "$(timestamp) [STARTUP] Overall platform startup failed after ${total_time}s" >> "$PERFORMANCE_LOG"
+    
+    print_error "Failed to start all services"
+    print_info "Total time before failure: ${total_time}s"
+    print_info "Run '$0 status' to check service health"
+    print_info "Run '$0 diagnostic' for detailed troubleshooting"
+    
+    return 1
 }
 
 # Stop all services
@@ -1992,6 +5005,185 @@ show_service_summary() {
         echo -e "  ${CYAN}Redis:${NC} redis://localhost:6379"
         echo -e "  ${CYAN}InfluxDB:${NC} http://localhost:8086"
         echo -e "  ${CYAN}Kafka:${NC} localhost:9092"
+    fi
+}
+
+# Enhanced service summary with performance information
+show_service_summary_with_performance() {
+    echo ""
+    print_header "📊 Service Summary with Performance Metrics"
+    
+    # Count services by status
+    local healthy_count=0
+    local total_count=0
+    local total_startup_time=0
+    
+    # Infrastructure services
+    echo -e "${BOLD}Infrastructure Services:${NC}"
+    for service in $INFRASTRUCTURE_SERVICES; do
+        local port=$(get_service_port "$service")
+        local description=$(get_service_description "$service")
+        local status=$(get_service_status "$service")
+        local start_time=$(get_service_start_time "$service")
+        
+        ((total_count++))
+        if [[ "$status" == "healthy" ]]; then
+            ((healthy_count++))
+            
+            # Calculate uptime if start time is available
+            local uptime_info=""
+            if [[ -n "$start_time" ]]; then
+                local current_time=$(date +%s)
+                local uptime=$((current_time - start_time))
+                uptime_info=" (uptime: ${uptime}s)"
+            fi
+            
+            echo -e "  ${GREEN}✓${NC} $service ($description) - Port $port$uptime_info"
+            
+            # Show recent resource usage if available
+            if [[ -f "$RESOURCE_METRICS_FILE" ]]; then
+                local recent_metrics=$(grep "^$service:" "$RESOURCE_METRICS_FILE" | tail -1)
+                if [[ -n "$recent_metrics" ]]; then
+                    local cpu_usage=$(echo "$recent_metrics" | grep -o 'cpu_percent=[^:]*' | cut -d'=' -f2)
+                    local memory_usage=$(echo "$recent_metrics" | grep -o 'memory_usage=[^:]*' | cut -d'=' -f2)
+                    
+                    if [[ -n "$cpu_usage" ]] && [[ -n "$memory_usage" ]]; then
+                        echo -e "    ${DIM}CPU: ${cpu_usage}%, Memory: $memory_usage${NC}"
+                    fi
+                fi
+            fi
+        else
+            echo -e "  ${RED}✗${NC} $service ($description) - Port $port [$status]"
+        fi
+    done
+    
+    echo ""
+    echo -e "${BOLD}Application Services:${NC}"
+    for service in $APPLICATION_SERVICES; do
+        local port=$(get_service_port "$service")
+        local description=$(get_service_description "$service")
+        local status=$(get_service_status "$service")
+        local start_time=$(get_service_start_time "$service")
+        
+        ((total_count++))
+        if [[ "$status" == "healthy" ]]; then
+            ((healthy_count++))
+            
+            # Calculate uptime if start time is available
+            local uptime_info=""
+            if [[ -n "$start_time" ]]; then
+                local current_time=$(date +%s)
+                local uptime=$((current_time - start_time))
+                uptime_info=" (uptime: ${uptime}s)"
+            fi
+            
+            echo -e "  ${GREEN}✓${NC} $service ($description) - Port $port$uptime_info"
+            
+            # Show recent resource usage if available
+            if [[ -f "$RESOURCE_METRICS_FILE" ]]; then
+                local recent_metrics=$(grep "^$service:" "$RESOURCE_METRICS_FILE" | tail -1)
+                if [[ -n "$recent_metrics" ]]; then
+                    local cpu_usage=$(echo "$recent_metrics" | grep -o 'cpu_percent=[^:]*' | cut -d'=' -f2)
+                    local memory_usage=$(echo "$recent_metrics" | grep -o 'memory_usage=[^:]*' | cut -d'=' -f2)
+                    
+                    if [[ -n "$cpu_usage" ]] && [[ -n "$memory_usage" ]]; then
+                        echo -e "    ${DIM}CPU: ${cpu_usage}%, Memory: $memory_usage${NC}"
+                    fi
+                fi
+            fi
+        else
+            echo -e "  ${RED}✗${NC} $service ($description) - Port $port [$status]"
+        fi
+    done
+    
+    echo ""
+    echo -e "${BOLD}Frontend Services:${NC}"
+    for service in $FRONTEND_SERVICES; do
+        local port=$(get_service_port "$service")
+        local description=$(get_service_description "$service")
+        local status=$(get_service_status "$service")
+        local start_time=$(get_service_start_time "$service")
+        
+        ((total_count++))
+        if [[ "$status" == "healthy" ]]; then
+            ((healthy_count++))
+            
+            # Calculate uptime if start time is available
+            local uptime_info=""
+            if [[ -n "$start_time" ]]; then
+                local current_time=$(date +%s)
+                local uptime=$((current_time - start_time))
+                uptime_info=" (uptime: ${uptime}s)"
+            fi
+            
+            echo -e "  ${GREEN}✓${NC} $service ($description) - Port $port$uptime_info"
+            
+            # Show recent resource usage if available
+            if [[ -f "$RESOURCE_METRICS_FILE" ]]; then
+                local recent_metrics=$(grep "^$service:" "$RESOURCE_METRICS_FILE" | tail -1)
+                if [[ -n "$recent_metrics" ]]; then
+                    local cpu_usage=$(echo "$recent_metrics" | grep -o 'cpu_percent=[^:]*' | cut -d'=' -f2)
+                    local memory_usage=$(echo "$recent_metrics" | grep -o 'memory_usage=[^:]*' | cut -d'=' -f2)
+                    
+                    if [[ -n "$cpu_usage" ]] && [[ -n "$memory_usage" ]]; then
+                        echo -e "    ${DIM}CPU: ${cpu_usage}%, Memory: $memory_usage${NC}"
+                    fi
+                fi
+            fi
+        else
+            echo -e "  ${RED}✗${NC} $service ($description) - Port $port [$status]"
+        fi
+    done
+    
+    echo ""
+    print_info "Services: $healthy_count/$total_count healthy"
+    
+    # Show performance summary if data is available
+    if [[ -f "$STARTUP_METRICS_FILE" ]] && [[ -s "$STARTUP_METRICS_FILE" ]]; then
+        echo ""
+        echo -e "${BOLD}Performance Summary:${NC}"
+        
+        # Get latest overall startup metrics
+        local latest_overall=$(grep "^overall_startup:" "$STARTUP_METRICS_FILE" | tail -1)
+        if [[ -n "$latest_overall" ]]; then
+            local total_time=$(echo "$latest_overall" | grep -o 'total_time=[0-9]*' | cut -d'=' -f2)
+            local status=$(echo "$latest_overall" | grep -o 'status=[^:]*' | cut -d'=' -f2)
+            
+            if [[ -n "$total_time" ]]; then
+                echo -e "  Last startup time: ${total_time}s ($status)"
+            fi
+        fi
+        
+        # Show average startup time
+        local avg_stats=$(get_startup_statistics 2>/dev/null | grep "Average Startup Time:")
+        if [[ -n "$avg_stats" ]]; then
+            echo -e "  $avg_stats"
+        fi
+    fi
+    
+    if [[ $healthy_count -eq $total_count ]]; then
+        echo ""
+        print_header "🌐 Access Points"
+        echo -e "${BOLD}Web Applications:${NC}"
+        echo -e "  ${CYAN}DevFlow Dashboard:${NC} http://localhost:3010"
+        echo ""
+        echo -e "${BOLD}API Endpoints:${NC}"
+        echo -e "  ${CYAN}API Gateway:${NC} http://localhost:3000"
+        echo -e "  ${CYAN}Data Ingestion:${NC} http://localhost:3001"
+        echo -e "  ${CYAN}Stream Processing:${NC} http://localhost:3002"
+        echo -e "  ${CYAN}ML Pipeline:${NC} http://localhost:3003"
+        echo ""
+        echo -e "${BOLD}Infrastructure:${NC}"
+        echo -e "  ${CYAN}MongoDB:${NC} mongodb://localhost:27017"
+        echo -e "  ${CYAN}Redis:${NC} redis://localhost:6379"
+        echo -e "  ${CYAN}InfluxDB:${NC} http://localhost:8086"
+        echo -e "  ${CYAN}Kafka:${NC} localhost:9092"
+        
+        echo ""
+        echo -e "${BOLD}Performance Tools:${NC}"
+        echo -e "  ${CYAN}Real-time Monitor:${NC} $0 monitor"
+        echo -e "  ${CYAN}Performance Analysis:${NC} $0 performance"
+        echo -e "  ${CYAN}Resource Usage:${NC} $0 resources"
     fi
 }
 
@@ -4129,7 +7321,20 @@ show_usage() {
     echo -e "  ${GREEN}validate${NC}     Run environment validation only"
     echo -e "  ${GREEN}diagnostic${NC}   Run comprehensive diagnostic analysis"
     echo -e "  ${GREEN}troubleshoot${NC} Get troubleshooting help and guidance"
+    echo -e "  ${GREEN}troubleshoot-guide${NC} Interactive troubleshooting guide"
     echo -e "  ${GREEN}error-report${NC} Generate detailed error report"
+    echo -e "  ${GREEN}recovery${NC}     Interactive recovery assistant for common issues"
+    echo -e "  ${GREEN}recovery-wizard${NC} Automatic recovery wizard"
+    echo -e "  ${GREEN}analyze-errors${NC} Analyze error patterns and trends"
+    echo -e "  ${GREEN}enhanced-diagnostic${NC} Enhanced diagnostic with focus areas"
+    echo ""
+    echo -e "${WHITE}PERFORMANCE MONITORING:${NC}"
+    echo -e "  ${GREEN}performance${NC}  Comprehensive performance analysis and recommendations"
+    echo -e "  ${GREEN}monitor${NC}      Real-time performance monitoring dashboard"
+    echo -e "  ${GREEN}resources${NC}    Current resource usage report"
+    echo -e "  ${GREEN}optimize${NC}     Startup optimization recommendations"
+    echo -e "  ${GREEN}metrics${NC}      View collected performance metrics"
+    echo ""
     echo -e "  ${GREEN}help${NC}         Show this help message"
     echo ""
     echo -e "${WHITE}OPTIONS:${NC}"
@@ -4151,15 +7356,24 @@ show_usage() {
     echo "  $0 start --diagnostic     # Start with full diagnostic mode"
     echo "  $0 validate               # Check environment only"
     echo "  $0 diagnostic             # Run comprehensive diagnostics"
+    echo "  $0 troubleshoot-guide     # Interactive troubleshooting"
+    echo "  $0 recovery-wizard        # Automatic recovery wizard"
+    echo "  $0 analyze-errors         # Analyze error patterns"
+    echo "  $0 enhanced-diagnostic    # Enhanced diagnostics"
     echo "  $0 error-report           # Generate error report"
     echo "  $0 status                 # Show current status"
     echo "  $0 dashboard              # Show real-time status dashboard"
+    echo "  $0 performance            # Analyze platform performance"
+    echo "  $0 monitor                # Start real-time performance monitoring"
+    echo "  $0 resources              # Show current resource usage"
+    echo "  $0 optimize               # Get startup optimization recommendations"
     echo "  $0 stop                   # Stop all services"
     echo ""
     echo -e "${WHITE}LOG FILES:${NC}"
     echo "  Script logs: $SCRIPT_LOG"
     echo "  Error history: $LOG_DIR/error_history.log"
     echo "  Diagnostic logs: $LOG_DIR/diagnostic.log"
+    echo "  Performance logs: $PERFORMANCE_LOG"
     echo "  Service logs: $LOG_DIR/"
     echo ""
 }
@@ -4304,6 +7518,94 @@ main() {
             print_header "📋 Error Report Generation"
             generate_error_report
             ;;
+        "recovery")
+            print_header "🔧 DevFlow Recovery Assistant"
+            
+            echo -e "${WHITE}Available Recovery Options:${NC}"
+            echo ""
+            echo "1. 🐳 Docker Recovery - Fix Docker-related issues"
+            echo "2. 🔌 Port Conflict Resolution - Resolve port conflicts"
+            echo "3. 🔄 Service Recovery - Restart failed services"
+            echo "4. 🧹 Disk Cleanup - Free up disk space"
+            echo "5. 🌐 Network Recovery - Fix connectivity issues"
+            echo "6. ⚙️  Configuration Recovery - Fix config issues"
+            echo "7. 🔍 Full System Diagnosis - Comprehensive analysis"
+            echo ""
+            
+            echo -n -e "${CYAN}Select recovery option [1-7]: ${NC}"
+            read -r recovery_option
+            
+            case "$recovery_option" in
+                "1")
+                    print_info "Running Docker recovery..."
+                    if attempt_docker_recovery; then
+                        print_success "Docker recovery completed"
+                    else
+                        print_error "Docker recovery failed - manual intervention required"
+                    fi
+                    ;;
+                "2")
+                    print_info "Running port conflict resolution..."
+                    if attempt_port_conflict_recovery; then
+                        print_success "Port conflicts resolved"
+                    else
+                        print_error "Port conflict resolution failed - manual intervention required"
+                    fi
+                    ;;
+                "3")
+                    echo -n -e "${CYAN}Enter service name to recover: ${NC}"
+                    read -r service_name
+                    if [[ -n "$service_name" ]]; then
+                        print_info "Running service recovery for: $service_name"
+                        if attempt_service_recovery "$service_name"; then
+                            print_success "Service recovery completed for: $service_name"
+                        else
+                            print_error "Service recovery failed for: $service_name"
+                        fi
+                    else
+                        print_error "No service name provided"
+                    fi
+                    ;;
+                "4")
+                    print_info "Running disk cleanup..."
+                    if attempt_disk_cleanup_recovery; then
+                        print_success "Disk cleanup completed"
+                    else
+                        print_error "Disk cleanup failed - manual intervention required"
+                    fi
+                    ;;
+                "5")
+                    print_info "Running network recovery..."
+                    if attempt_network_recovery; then
+                        print_success "Network recovery completed"
+                    else
+                        print_error "Network recovery failed - check connection manually"
+                    fi
+                    ;;
+                "6")
+                    echo -n -e "${CYAN}Enter configuration context (docker-compose/env): ${NC}"
+                    read -r config_context
+                    if [[ -n "$config_context" ]]; then
+                        print_info "Running configuration recovery for: $config_context"
+                        if attempt_config_recovery "$config_context"; then
+                            print_success "Configuration recovery completed"
+                        else
+                            print_error "Configuration recovery failed - manual intervention required"
+                        fi
+                    else
+                        print_error "No configuration context provided"
+                    fi
+                    ;;
+                "7")
+                    print_info "Running full system diagnosis..."
+                    enable_diagnostic_mode
+                    run_comprehensive_diagnostics
+                    ;;
+                *)
+                    print_error "Invalid option selected"
+                    ;;
+            esac
+            ;;
         "troubleshoot")
             print_header "🔧 DevFlow Troubleshooting Assistant"
             
@@ -4338,6 +7640,78 @@ main() {
                 run_comprehensive_diagnostics
             fi
             ;;
+        "performance"|"perf")
+            performance_analysis
+            ;;
+        "monitor")
+            monitor_realtime_performance
+            ;;
+        "resources")
+            print_header "💾 Resource Usage Report"
+            get_resource_usage_summary
+            ;;
+        "optimize")
+            optimize_startup_sequence
+            ;;
+        "metrics")
+            print_header "📊 Performance Metrics"
+            
+            echo -e "${WHITE}Available Performance Metrics:${NC}"
+            echo ""
+            
+            if [[ -f "$STARTUP_METRICS_FILE" ]] && [[ -s "$STARTUP_METRICS_FILE" ]]; then
+                echo -e "${CYAN}Startup Statistics:${NC}"
+                get_startup_statistics
+                echo ""
+            else
+                echo -e "${YELLOW}No startup metrics available yet${NC}"
+                echo ""
+            fi
+            
+            if [[ -f "$RESOURCE_METRICS_FILE" ]] && [[ -s "$RESOURCE_METRICS_FILE" ]]; then
+                echo -e "${CYAN}Recent Resource Usage:${NC}"
+                echo "Resource metrics collected for $(grep -c ":" "$RESOURCE_METRICS_FILE") measurements"
+                echo ""
+                
+                # Show summary of recent metrics
+                local all_services=($INFRASTRUCTURE_SERVICES $APPLICATION_SERVICES $FRONTEND_SERVICES)
+                for service in "${all_services[@]}"; do
+                    local recent_metric=$(grep "^$service:" "$RESOURCE_METRICS_FILE" | tail -1)
+                    if [[ -n "$recent_metric" ]]; then
+                        local timestamp=$(echo "$recent_metric" | cut -d':' -f2)
+                        local cpu_usage=$(echo "$recent_metric" | grep -o 'cpu_percent=[^:]*' | cut -d'=' -f2)
+                        local memory_usage=$(echo "$recent_metric" | grep -o 'memory_usage=[^:]*' | cut -d'=' -f2)
+                        
+                        local time_readable=$(date -d "@$timestamp" 2>/dev/null || date -r "$timestamp" 2>/dev/null || echo "$timestamp")
+                        echo "$service: CPU ${cpu_usage}%, Memory $memory_usage (at $time_readable)"
+                    fi
+                done
+                echo ""
+            else
+                echo -e "${YELLOW}No resource metrics available yet${NC}"
+                echo ""
+            fi
+            
+            echo -e "${CYAN}Performance Commands:${NC}"
+            echo "• $0 performance  - Detailed performance analysis"
+            echo "• $0 monitor      - Real-time performance monitoring"
+            echo "• $0 resources    - Current resource usage report"
+            echo "• $0 optimize     - Startup optimization recommendations"
+            ;;
+        "troubleshoot-guide"|"troubleshoot-interactive")
+            run_troubleshooting_guide
+            ;;
+        "recovery-wizard"|"auto-recovery")
+            run_automatic_recovery_wizard
+            ;;
+        "analyze-errors"|"error-analysis")
+            analyze_errors
+            ;;
+        "enhanced-diagnostic"|"diagnostic-enhanced")
+            enable_diagnostic_mode
+            local focus_area="${2:-all}"
+            collect_enhanced_diagnostic_info "$focus_area"
+            ;;
         "help"|"--help"|"-h")
             show_usage
             ;;
@@ -4345,10 +7719,15 @@ main() {
             print_error "❌ Unknown command: $command"
             echo ""
             echo -e "${YELLOW}💡 Did you mean one of these?${NC}"
-            echo "   • start      - Start all DevFlow services"
-            echo "   • stop       - Stop all services"
-            echo "   • status     - Check service status"
-            echo "   • diagnostic - Run comprehensive diagnostics"
+            echo "   • start        - Start all DevFlow services"
+            echo "   • stop         - Stop all services"
+            echo "   • status       - Check service status"
+            echo "   • performance  - Performance analysis"
+            echo "   • monitor      - Real-time performance monitoring"
+            echo "   • resources    - Resource usage report"
+            echo "   • optimize     - Startup optimization"
+            echo "   • metrics      - View performance metrics"
+            echo "   • diagnostic   - Run comprehensive diagnostics"
             echo "   • troubleshoot - Get troubleshooting help"
             echo ""
             show_usage
@@ -4419,3 +7798,660 @@ trap 'cleanup' EXIT
 
 # Run main function with all arguments
 main "$@"
+
+# Enhanced troubleshooting command
+run_troubleshooting_guide() {
+    print_header "🔧 DevFlow Troubleshooting Guide"
+    
+    echo ""
+    print_info "This guide will help you diagnose and fix common DevFlow issues."
+    echo ""
+    
+    # Interactive troubleshooting menu
+    while true; do
+        echo -e "${BOLD}${CYAN}Select a troubleshooting category:${NC}"
+        echo "1. Docker and Container Issues"
+        echo "2. Service Startup Problems"
+        echo "3. Network and Connectivity Issues"
+        echo "4. Resource and Performance Issues"
+        echo "5. Configuration Problems"
+        echo "6. Run Comprehensive Diagnostics"
+        echo "7. View Error History"
+        echo "8. Exit Troubleshooting"
+        echo ""
+        
+        echo -n -e "${CYAN}Enter your choice (1-8): ${NC}"
+        read -r choice
+        
+        case "$choice" in
+            1)
+                troubleshoot_docker_issues
+                ;;
+            2)
+                troubleshoot_service_issues
+                ;;
+            3)
+                troubleshoot_network_issues
+                ;;
+            4)
+                troubleshoot_resource_issues
+                ;;
+            5)
+                troubleshoot_config_issues
+                ;;
+            6)
+                run_comprehensive_diagnostics
+                ;;
+            7)
+                view_error_history
+                ;;
+            8)
+                print_info "Exiting troubleshooting guide"
+                break
+                ;;
+            *)
+                print_warning "Invalid choice. Please select 1-8."
+                ;;
+        esac
+        
+        echo ""
+        echo -n -e "${CYAN}Press Enter to continue...${NC}"
+        read -r
+        echo ""
+    done
+}
+
+# Docker troubleshooting
+troubleshoot_docker_issues() {
+    print_header "🐳 Docker Troubleshooting"
+    
+    print_status "Checking Docker installation and status..."
+    
+    # Check Docker installation
+    if ! command -v docker >/dev/null 2>&1; then
+        print_error "❌ Docker is not installed"
+        echo ""
+        echo -e "${CYAN}Solution:${NC}"
+        echo "1. Install Docker Desktop from: https://docker.com/products/docker-desktop"
+        echo "2. Follow the installation instructions for your operating system"
+        echo "3. Restart your terminal after installation"
+        echo "4. Verify installation: docker --version"
+        return 1
+    fi
+    
+    print_success "✅ Docker is installed"
+    
+    # Check Docker status
+    if ! docker info >/dev/null 2>&1; then
+        print_error "❌ Docker is not running"
+        echo ""
+        echo -e "${CYAN}Solution:${NC}"
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            echo "1. Start Docker Desktop application"
+            echo "2. Wait for Docker to fully initialize (whale icon in menu bar)"
+            echo "3. Verify with: docker info"
+        else
+            echo "1. Start Docker service: sudo systemctl start docker"
+            echo "2. Enable Docker to start on boot: sudo systemctl enable docker"
+            echo "3. Verify with: docker info"
+        fi
+        
+        echo ""
+        echo -n -e "${CYAN}Would you like to attempt automatic Docker recovery? [y/N]: ${NC}"
+        read -r attempt_docker_recovery_choice
+        
+        if [[ "$attempt_docker_recovery_choice" =~ ^[Yy] ]]; then
+            attempt_docker_recovery
+        fi
+        
+        return 1
+    fi
+    
+    print_success "✅ Docker is running"
+    
+    # Check Docker Compose
+    if ! command -v docker-compose >/dev/null 2>&1; then
+        print_error "❌ Docker Compose is not installed"
+        echo ""
+        echo -e "${CYAN}Solution:${NC}"
+        echo "1. Docker Compose is usually included with Docker Desktop"
+        echo "2. If using Docker Engine, install separately:"
+        echo "   curl -L \"https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose"
+        echo "   chmod +x /usr/local/bin/docker-compose"
+        return 1
+    fi
+    
+    print_success "✅ Docker Compose is available"
+    
+    # Check docker-compose.yml
+    if [[ ! -f "docker-compose.yml" ]]; then
+        print_error "❌ docker-compose.yml not found"
+        echo ""
+        echo -e "${CYAN}Solution:${NC}"
+        echo "1. Ensure you're in the correct DevFlow directory"
+        echo "2. Check if docker-compose.yml exists in the project root"
+        return 1
+    fi
+    
+    print_success "✅ docker-compose.yml found"
+    
+    # Validate docker-compose.yml
+    if ! docker-compose config >/dev/null 2>&1; then
+        print_error "❌ docker-compose.yml has syntax errors"
+        echo ""
+        echo -e "${CYAN}Solution:${NC}"
+        echo "1. Check docker-compose.yml syntax:"
+        echo "   docker-compose config"
+        echo "2. Fix any syntax errors reported"
+        echo "3. Validate YAML formatting"
+        return 1
+    fi
+    
+    print_success "✅ docker-compose.yml is valid"
+    
+    print_success "🎉 Docker setup is healthy!"
+}
+
+# Service troubleshooting
+troubleshoot_service_issues() {
+    print_header "⚙️ Service Troubleshooting"
+    
+    print_status "Analyzing service status..."
+    
+    local all_services=($INFRASTRUCTURE_SERVICES $APPLICATION_SERVICES $FRONTEND_SERVICES)
+    local problematic_services=()
+    
+    for service in "${all_services[@]}"; do
+        local status=$(get_service_status "$service")
+        
+        case "$status" in
+            "healthy"|"running")
+                print_success "✅ $service: $status"
+                ;;
+            "unhealthy"|"failed"|"stopped")
+                print_error "❌ $service: $status"
+                problematic_services+=("$service")
+                ;;
+            "unknown")
+                print_warning "⚠️  $service: $status"
+                problematic_services+=("$service")
+                ;;
+        esac
+    done
+    
+    if [[ ${#problematic_services[@]} -eq 0 ]]; then
+        print_success "🎉 All services are healthy!"
+        return 0
+    fi
+    
+    echo ""
+    print_info "Troubleshooting problematic services..."
+    
+    for service in "${problematic_services[@]}"; do
+        echo ""
+        print_status "Analyzing service: $service"
+        
+        # Check dependencies
+        local dependencies=$(get_service_dependencies "$service")
+        if [[ -n "$dependencies" ]]; then
+            print_info "Dependencies: $dependencies"
+            
+            for dep in $dependencies; do
+                local dep_status=$(get_service_status "$dep")
+                if [[ "$dep_status" != "healthy" ]] && [[ "$dep_status" != "running" ]]; then
+                    print_warning "⚠️  Dependency $dep is not healthy: $dep_status"
+                    echo "   Solution: Start $dep before $service"
+                fi
+            done
+        fi
+        
+        # Check container status
+        local container_name="devflow-${service}-1"
+        local actual_container=$(docker ps -a --format "{{.Names}}" | grep -E "${service}|${container_name}" | head -1)
+        
+        if [[ -n "$actual_container" ]]; then
+            print_info "Container: $actual_container"
+            
+            # Get container logs
+            print_info "Recent logs:"
+            docker logs --tail=5 "$actual_container" 2>&1 | sed 's/^/  /' || echo "  No logs available"
+            
+            # Check if container is running
+            if docker ps --format "{{.Names}}" | grep -q "$actual_container"; then
+                print_info "Container is running"
+                
+                # Test health check
+                local health_cmd=$(get_health_check_command "$service")
+                if [[ -n "$health_cmd" ]]; then
+                    print_info "Testing health check..."
+                    if eval "$health_cmd" >/dev/null 2>&1; then
+                        print_success "Health check passed"
+                    else
+                        print_error "Health check failed"
+                        echo "   Solution: Check service configuration and logs"
+                    fi
+                fi
+            else
+                print_warning "Container is not running"
+                echo "   Solution: Start the service with: docker-compose up -d $service"
+            fi
+        else
+            print_warning "Container not found"
+            echo "   Solution: Create and start the service with: docker-compose up -d $service"
+        fi
+        
+        # Offer recovery
+        echo ""
+        echo -n -e "${CYAN}Would you like to attempt automatic recovery for $service? [y/N]: ${NC}"
+        read -r attempt_service_recovery_choice
+        
+        if [[ "$attempt_service_recovery_choice" =~ ^[Yy] ]]; then
+            attempt_service_recovery "$service"
+        fi
+    done
+}
+
+# Network troubleshooting
+troubleshoot_network_issues() {
+    print_header "🌐 Network Troubleshooting"
+    
+    print_status "Testing network connectivity..."
+    
+    # Test DNS resolution
+    print_info "Testing DNS resolution..."
+    local dns_servers=("google.com" "github.com" "docker.io")
+    local dns_failures=0
+    
+    for server in "${dns_servers[@]}"; do
+        if nslookup "$server" >/dev/null 2>&1; then
+            print_success "✅ DNS resolution for $server: OK"
+        else
+            print_error "❌ DNS resolution for $server: FAILED"
+            ((dns_failures++))
+        fi
+    done
+    
+    if [[ $dns_failures -gt 0 ]]; then
+        echo ""
+        echo -e "${CYAN}DNS Resolution Issues:${NC}"
+        echo "1. Check your internet connection"
+        echo "2. Verify DNS settings in your network configuration"
+        echo "3. Try using different DNS servers (8.8.8.8, 1.1.1.1)"
+        echo "4. Restart your network interface"
+    fi
+    
+    # Test internet connectivity
+    echo ""
+    print_info "Testing internet connectivity..."
+    local endpoints=("google.com:80" "github.com:443" "docker.io:443")
+    local connectivity_failures=0
+    
+    for endpoint in "${endpoints[@]}"; do
+        local host=$(echo "$endpoint" | cut -d':' -f1)
+        local port=$(echo "$endpoint" | cut -d':' -f2)
+        
+        if timeout 5 bash -c "</dev/tcp/$host/$port" 2>/dev/null; then
+            print_success "✅ Connection to $endpoint: OK"
+        else
+            print_error "❌ Connection to $endpoint: FAILED"
+            ((connectivity_failures++))
+        fi
+    done
+    
+    if [[ $connectivity_failures -gt 0 ]]; then
+        echo ""
+        echo -e "${CYAN}Internet Connectivity Issues:${NC}"
+        echo "1. Check your internet connection"
+        echo "2. Verify firewall settings"
+        echo "3. Check proxy settings if applicable"
+        echo "4. Try connecting from a different network"
+    fi
+    
+    # Check port availability
+    echo ""
+    print_info "Checking port availability..."
+    local port_conflicts=0
+    
+    for port in "${REQUIRED_PORTS[@]}"; do
+        local process_info=$(lsof -ti:$port 2>/dev/null)
+        if [[ -n "$process_info" ]]; then
+            local process_name=$(ps -p $process_info -o comm= 2>/dev/null || echo "unknown")
+            print_warning "⚠️  Port $port: OCCUPIED by $process_name (PID: $process_info)"
+            ((port_conflicts++))
+        else
+            print_success "✅ Port $port: AVAILABLE"
+        fi
+    done
+    
+    if [[ $port_conflicts -gt 0 ]]; then
+        echo ""
+        echo -e "${CYAN}Port Conflict Solutions:${NC}"
+        echo "1. Stop conflicting processes: kill <PID>"
+        echo "2. Change service ports in docker-compose.yml"
+        echo "3. Use different port ranges for DevFlow services"
+        
+        echo ""
+        echo -n -e "${CYAN}Would you like to attempt automatic port conflict resolution? [y/N]: ${NC}"
+        read -r attempt_port_recovery_choice
+        
+        if [[ "$attempt_port_recovery_choice" =~ ^[Yy] ]]; then
+            attempt_port_conflict_recovery
+        fi
+    fi
+    
+    if [[ $dns_failures -eq 0 ]] && [[ $connectivity_failures -eq 0 ]] && [[ $port_conflicts -eq 0 ]]; then
+        print_success "🎉 Network connectivity is healthy!"
+    fi
+}
+
+# Resource troubleshooting
+troubleshoot_resource_issues() {
+    print_header "💾 Resource Troubleshooting"
+    
+    print_status "Analyzing system resources..."
+    
+    # Check disk space
+    print_info "Checking disk space..."
+    local disk_usage=$(df . | tail -1 | awk '{print $5}' | sed 's/%//')
+    
+    if [[ $disk_usage -gt 90 ]]; then
+        print_error "❌ Critical disk usage: ${disk_usage}%"
+        echo ""
+        echo -e "${CYAN}Disk Space Solutions:${NC}"
+        echo "1. Clean Docker resources: docker system prune -a -f"
+        echo "2. Remove unused Docker images: docker image prune -a -f"
+        echo "3. Clear application logs"
+        echo "4. Move to larger storage device"
+        
+        echo ""
+        echo -n -e "${CYAN}Would you like to attempt automatic disk cleanup? [y/N]: ${NC}"
+        read -r attempt_disk_cleanup_choice
+        
+        if [[ "$attempt_disk_cleanup_choice" =~ ^[Yy] ]]; then
+            attempt_disk_cleanup_recovery
+        fi
+    elif [[ $disk_usage -gt 80 ]]; then
+        print_warning "⚠️  High disk usage: ${disk_usage}%"
+        echo "   Consider cleaning up disk space soon"
+    else
+        print_success "✅ Disk usage: ${disk_usage}% (OK)"
+    fi
+    
+    # Check memory usage
+    echo ""
+    print_info "Checking memory usage..."
+    
+    if command -v free >/dev/null 2>&1; then
+        local mem_usage=$(free | awk 'NR==2{printf "%.1f", $3*100/$2}')
+        local mem_usage_int=$(echo "$mem_usage" | cut -d'.' -f1)
+        
+        if [[ $mem_usage_int -gt 90 ]]; then
+            print_error "❌ Critical memory usage: ${mem_usage}%"
+            echo ""
+            echo -e "${CYAN}Memory Usage Solutions:${NC}"
+            echo "1. Restart memory-intensive services"
+            echo "2. Increase system memory"
+            echo "3. Optimize service configurations"
+        elif [[ $mem_usage_int -gt 80 ]]; then
+            print_warning "⚠️  High memory usage: ${mem_usage}%"
+        else
+            print_success "✅ Memory usage: ${mem_usage}% (OK)"
+        fi
+    elif command -v vm_stat >/dev/null 2>&1; then
+        print_info "Memory information available via Activity Monitor (macOS)"
+    else
+        print_warning "Memory usage information not available"
+    fi
+    
+    # Check container resource usage
+    echo ""
+    print_info "Checking container resource usage..."
+    
+    local all_services=($INFRASTRUCTURE_SERVICES $APPLICATION_SERVICES $FRONTEND_SERVICES)
+    local high_usage_containers=()
+    
+    for service in "${all_services[@]}"; do
+        local container_name="devflow-${service}-1"
+        local actual_container=$(docker ps --format "{{.Names}}" | grep -E "${service}|${container_name}" | head -1)
+        
+        if [[ -n "$actual_container" ]]; then
+            local stats=$(docker stats --no-stream --format "{{.CPUPerc}}\t{{.MemUsage}}" "$actual_container" 2>/dev/null)
+            
+            if [[ -n "$stats" ]]; then
+                local cpu=$(echo "$stats" | awk '{print $1}' | sed 's/%//')
+                local memory=$(echo "$stats" | awk '{print $2}')
+                
+                if [[ -n "$cpu" ]] && [[ $(echo "$cpu > 80" | bc -l 2>/dev/null || echo "0") -eq 1 ]]; then
+                    print_warning "⚠️  High CPU usage in $service: ${cpu}%"
+                    high_usage_containers+=("$service")
+                else
+                    print_success "✅ $service: CPU ${cpu}%, Memory $memory"
+                fi
+            fi
+        fi
+    done
+    
+    if [[ ${#high_usage_containers[@]} -gt 0 ]]; then
+        echo ""
+        echo -e "${CYAN}High Resource Usage Solutions:${NC}"
+        echo "1. Restart high-usage containers"
+        echo "2. Check for resource leaks in application code"
+        echo "3. Optimize service configurations"
+        echo "4. Consider resource limits in docker-compose.yml"
+        
+        for container in "${high_usage_containers[@]}"; do
+            echo ""
+            echo -n -e "${CYAN}Would you like to restart $container to reduce resource usage? [y/N]: ${NC}"
+            read -r restart_container
+            
+            if [[ "$restart_container" =~ ^[Yy] ]]; then
+                docker-compose restart "$container"
+                print_info "Restarted $container"
+            fi
+        done
+    fi
+}
+
+# Configuration troubleshooting
+troubleshoot_config_issues() {
+    print_header "⚙️ Configuration Troubleshooting"
+    
+    print_status "Checking configuration files..."
+    
+    # Check docker-compose.yml
+    if [[ ! -f "docker-compose.yml" ]]; then
+        print_error "❌ docker-compose.yml not found"
+        echo ""
+        echo -e "${CYAN}Solution:${NC}"
+        echo "1. Ensure you're in the correct DevFlow directory"
+        echo "2. Check if the file was accidentally deleted"
+        echo "3. Restore from version control if available"
+        return 1
+    fi
+    
+    print_success "✅ docker-compose.yml found"
+    
+    # Validate docker-compose.yml
+    if ! docker-compose config >/dev/null 2>&1; then
+        print_error "❌ docker-compose.yml has syntax errors"
+        echo ""
+        echo -e "${CYAN}Syntax Errors:${NC}"
+        docker-compose config 2>&1 | head -10 | sed 's/^/  /'
+        echo ""
+        echo -e "${CYAN}Solution:${NC}"
+        echo "1. Fix YAML syntax errors"
+        echo "2. Check indentation (use spaces, not tabs)"
+        echo "3. Validate YAML online or with a YAML validator"
+        return 1
+    fi
+    
+    print_success "✅ docker-compose.yml syntax is valid"
+    
+    # Check .env file
+    if [[ ! -f ".env" ]]; then
+        if [[ -f ".env.example" ]]; then
+            print_warning "⚠️  .env file missing, but .env.example exists"
+            echo ""
+            echo -e "${CYAN}Solution:${NC}"
+            echo "1. Copy .env.example to .env: cp .env.example .env"
+            echo "2. Edit .env with your specific configuration"
+            
+            echo ""
+            echo -n -e "${CYAN}Would you like to create .env from .env.example? [y/N]: ${NC}"
+            read -r create_env
+            
+            if [[ "$create_env" =~ ^[Yy] ]]; then
+                cp ".env.example" ".env"
+                print_success "✅ Created .env from .env.example"
+            fi
+        else
+            print_warning "⚠️  .env file missing and no .env.example found"
+            echo "   This may be normal if no environment variables are required"
+        fi
+    else
+        print_success "✅ .env file found"
+    fi
+    
+    # Check required directories
+    local required_dirs=("logs" "pids")
+    for dir in "${required_dirs[@]}"; do
+        if [[ ! -d "$dir" ]]; then
+            print_warning "⚠️  Required directory missing: $dir"
+            mkdir -p "$dir"
+            print_info "Created directory: $dir"
+        else
+            print_success "✅ Directory exists: $dir"
+        fi
+    done
+    
+    print_success "🎉 Configuration check completed!"
+}
+
+# View error history
+view_error_history() {
+    print_header "📜 Error History"
+    
+    if [[ ! -f "$LOG_DIR/error_history.log" ]]; then
+        print_warning "No error history available"
+        return 0
+    fi
+    
+    print_info "Recent errors (last 20 entries):"
+    echo ""
+    
+    tail -20 "$LOG_DIR/error_history.log" | while IFS= read -r line; do
+        if [[ "$line" =~ ERROR ]]; then
+            echo -e "${RED}$line${NC}"
+        elif [[ "$line" =~ WARNING ]]; then
+            echo -e "${YELLOW}$line${NC}"
+        else
+            echo -e "${DIM}$line${NC}"
+        fi
+    done
+    
+    echo ""
+    print_info "Full error history available at: $LOG_DIR/error_history.log"
+    
+    echo ""
+    echo -n -e "${CYAN}Would you like to view the full error history? [y/N]: ${NC}"
+    read -r view_full
+    
+    if [[ "$view_full" =~ ^[Yy] ]]; then
+        less "$LOG_DIR/error_history.log"
+    fi
+}
+
+# Error analysis command
+analyze_errors() {
+    print_header "📊 Error Analysis"
+    
+    if [[ ! -f "$LOG_DIR/error_history.log" ]]; then
+        print_warning "No error history available for analysis"
+        return 0
+    fi
+    
+    print_status "Analyzing error patterns..."
+    
+    local analysis_file="$LOG_DIR/error-analysis-$(date +%Y%m%d-%H%M%S).txt"
+    
+    {
+        echo "DevFlow Error Analysis Report"
+        echo "============================"
+        echo "Generated: $(date)"
+        echo ""
+        
+        echo "ERROR FREQUENCY ANALYSIS"
+        echo "-----------------------"
+        echo "Most common error types:"
+        grep -o '\[E[0-9]*\]' "$LOG_DIR/error_history.log" 2>/dev/null | sort | uniq -c | sort -nr | head -10
+        echo ""
+        
+        echo "ERROR TIMELINE"
+        echo "-------------"
+        echo "Errors by hour (last 24 hours):"
+        local current_date=$(date +%Y-%m-%d)
+        grep "$current_date" "$LOG_DIR/error_history.log" 2>/dev/null | cut -d' ' -f2 | cut -d':' -f1 | sort | uniq -c | sort -nr
+        echo ""
+        
+        echo "SERVICE-SPECIFIC ERRORS"
+        echo "----------------------"
+        echo "Errors by service:"
+        grep -o 'Context: [^)]*' "$LOG_DIR/error_history.log" 2>/dev/null | cut -d' ' -f2 | sort | uniq -c | sort -nr
+        echo ""
+        
+        echo "RECENT CRITICAL ERRORS"
+        echo "---------------------"
+        grep -E "(CRITICAL|E001|E002|E003)" "$LOG_DIR/error_history.log" 2>/dev/null | tail -10
+        echo ""
+        
+        echo "RECOVERY SUCCESS RATE"
+        echo "--------------------"
+        local total_recoveries=$(grep -c "RECOVERY.*successful" "$LOG_DIR/error_history.log" 2>/dev/null || echo "0")
+        local failed_recoveries=$(grep -c "RECOVERY.*failed" "$LOG_DIR/error_history.log" 2>/dev/null || echo "0")
+        local total_attempts=$((total_recoveries + failed_recoveries))
+        
+        if [[ $total_attempts -gt 0 ]]; then
+            local success_rate=$((total_recoveries * 100 / total_attempts))
+            echo "Total recovery attempts: $total_attempts"
+            echo "Successful recoveries: $total_recoveries"
+            echo "Failed recoveries: $failed_recoveries"
+            echo "Success rate: ${success_rate}%"
+        else
+            echo "No recovery attempts recorded"
+        fi
+        echo ""
+        
+        echo "RECOMMENDATIONS"
+        echo "--------------"
+        
+        # Analyze patterns and provide recommendations
+        local docker_errors=$(grep -c "DOCKER_NOT_RUNNING\|E001" "$LOG_DIR/error_history.log" 2>/dev/null || echo "0")
+        local service_errors=$(grep -c "SERVICE_.*_FAILED\|E004\|E005" "$LOG_DIR/error_history.log" 2>/dev/null || echo "0")
+        local network_errors=$(grep -c "NETWORK_UNREACHABLE\|E008" "$LOG_DIR/error_history.log" 2>/dev/null || echo "0")
+        
+        if [[ $docker_errors -gt 5 ]]; then
+            echo "• High frequency of Docker issues detected"
+            echo "  Consider: Ensuring Docker Desktop starts automatically"
+        fi
+        
+        if [[ $service_errors -gt 10 ]]; then
+            echo "• Frequent service failures detected"
+            echo "  Consider: Reviewing service dependencies and startup order"
+        fi
+        
+        if [[ $network_errors -gt 3 ]]; then
+            echo "• Network connectivity issues detected"
+            echo "  Consider: Checking firewall settings and network stability"
+        fi
+        
+        echo ""
+        echo "For detailed troubleshooting, run: $0 troubleshoot"
+        
+    } > "$analysis_file"
+    
+    # Display analysis
+    cat "$analysis_file"
+    
+    print_success "Error analysis completed"
+    print_info "Full analysis saved to: $analysis_file"
+}
