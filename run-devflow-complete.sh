@@ -116,6 +116,12 @@ SERVICE_STATUS_DIR="$PID_DIR/status"
 SERVICE_PIDS_FILE="$PID_DIR/service_pids"
 SERVICE_START_TIME_FILE="$PID_DIR/start_times"
 
+# Performance monitoring configuration
+PERFORMANCE_METRICS_FILE="$PID_DIR/performance_metrics"
+STARTUP_METRICS_FILE="$PID_DIR/startup_metrics"
+RESOURCE_METRICS_FILE="$PID_DIR/resource_metrics"
+PERFORMANCE_LOG="$LOG_DIR/performance.log"
+
 # Initialize status tracking
 init_service_tracking() {
     mkdir -p "$SERVICE_STATUS_DIR"

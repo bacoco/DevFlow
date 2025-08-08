@@ -30,13 +30,13 @@
   - Create troubleshooting commands and diagnostic tools
   - _Requirements: 3.3, 3.5_
 
-- [-] 6. Implement comprehensive error handling
+- [ ] 6. Implement comprehensive error handling
   - Add detailed error messages and recovery suggestions
   - Implement automatic recovery for common issues
   - Create diagnostic mode with verbose logging
   - _Requirements: 2.3, 2.5_
 
-- [ ] 7. Add performance monitoring and optimization
+- [-] 7. Add performance monitoring and optimization
   - Implement startup time tracking and optimization
   - Add resource usage monitoring and reporting
   - Create performance metrics collection and display
