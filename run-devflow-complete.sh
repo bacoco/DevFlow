@@ -426,7 +426,15 @@ get_error_code() {
         "PERMISSION_DENIED") echo "E010" ;;
         "RESOURCE_EXHAUSTED") echo "E011" ;;
         "TIMEOUT") echo "E012" ;;
-        *) echo "UNKNOWN" ;;
+        "CONTAINER_NOT_FOUND") echo "E013" ;;
+        "IMAGE_PULL_FAILED") echo "E014" ;;
+        "COMPOSE_FILE_INVALID") echo "E015" ;;
+        "ENV_VAR_MISSING") echo "E016" ;;
+        "DATABASE_CONNECTION_FAILED") echo "E017" ;;
+        "SERVICE_DEPENDENCY_FAILED") echo "E018" ;;
+        "HEALTH_CHECK_TIMEOUT") echo "E019" ;;
+        "STARTUP_SEQUENCE_FAILED") echo "E020" ;;
+        *) echo "E999" ;;
     esac
 }
 
@@ -445,11 +453,20 @@ get_recovery_strategy() {
         "E010") echo "Run with appropriate permissions or fix file ownership" ;;
         "E011") echo "Free up system resources or increase resource limits" ;;
         "E012") echo "Increase timeout values or check system performance" ;;
-        *) echo "Contact support for assistance" ;;
+        "E013") echo "Rebuild Docker containers or check image availability" ;;
+        "E014") echo "Check internet connection and Docker registry access" ;;
+        "E015") echo "Validate docker-compose.yml syntax and structure" ;;
+        "E016") echo "Set required environment variables or create .env file" ;;
+        "E017") echo "Check database service status and connection parameters" ;;
+        "E018") echo "Ensure all service dependencies are healthy before starting" ;;
+        "E019") echo "Increase health check timeout or fix service startup issues" ;;
+        "E020") echo "Review service startup order and dependency configuration" ;;
+        "E999") echo "Run diagnostic mode for detailed error analysis" ;;
+        *) echo "Contact support for assistance with error details" ;;
     esac
 }
 
-# Enhanced error handling with automatic recovery
+# Enhanced error handling with automatic recovery and detailed diagnostics
 handle_error() {
     local error_type="$1"
     local error_message="$2"
@@ -462,34 +479,79 @@ handle_error() {
     # Log the error with full context
     log_error_with_recovery "$error_message" "$error_code" "$recovery_strategy" "$context"
     
-    # Display error to user
-    print_error "$error_message"
-    print_info "Error Code: $error_code"
-    print_info "Recovery: $recovery_strategy"
+    # Display detailed error information to user
+    echo ""
+    print_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_error "ERROR DETECTED: $error_message"
+    print_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo -e "${RED}Error Code:${NC} $error_code"
+    echo -e "${RED}Context:${NC} ${context:-'General system error'}"
+    echo -e "${RED}Timestamp:${NC} $(timestamp)"
+    echo ""
+    
+    # Show detailed recovery information
+    echo -e "${CYAN}💡 RECOVERY SUGGESTION:${NC}"
+    echo -e "   $recovery_strategy"
+    echo ""
+    
+    # Show additional context-specific information
+    show_error_context_info "$error_type" "$context"
     
     # Attempt automatic recovery if enabled
     if [[ "$auto_recover" == "true" ]]; then
-        print_status "Attempting automatic recovery..."
+        echo -e "${YELLOW}🔧 ATTEMPTING AUTOMATIC RECOVERY...${NC}"
+        echo ""
         
         case "$error_type" in
             "DOCKER_NOT_RUNNING")
-                attempt_docker_recovery
+                if attempt_docker_recovery; then
+                    print_success "✅ Automatic recovery successful!"
+                    return 0
+                fi
                 ;;
             "PORT_CONFLICT")
-                attempt_port_conflict_recovery
+                if attempt_port_conflict_recovery; then
+                    print_success "✅ Automatic recovery successful!"
+                    return 0
+                fi
                 ;;
             "SERVICE_START_FAILED")
-                attempt_service_recovery "$context"
+                if attempt_service_recovery "$context"; then
+                    print_success "✅ Automatic recovery successful!"
+                    return 0
+                fi
                 ;;
             "DISK_SPACE_LOW")
-                attempt_disk_cleanup_recovery
+                if attempt_disk_cleanup_recovery; then
+                    print_success "✅ Automatic recovery successful!"
+                    return 0
+                fi
+                ;;
+            "NETWORK_UNREACHABLE")
+                if attempt_network_recovery; then
+                    print_success "✅ Automatic recovery successful!"
+                    return 0
+                fi
+                ;;
+            "CONFIG_INVALID")
+                if attempt_config_recovery "$context"; then
+                    print_success "✅ Automatic recovery successful!"
+                    return 0
+                fi
                 ;;
             *)
-                print_warning "No automatic recovery available for error type: $error_type"
-                return 1
+                print_warning "❌ No automatic recovery available for error type: $error_type"
                 ;;
         esac
+        
+        print_error "❌ Automatic recovery failed"
+        echo ""
     fi
+    
+    # Offer manual recovery options
+    offer_manual_recovery_options "$error_type" "$context"
+    
+    return 1
 }
 
 # Automatic Docker recovery
@@ -605,6 +667,7 @@ attempt_disk_cleanup_recovery() {
     print_status "Attempting to free up disk space..."
     
     local space_freed=false
+    local initial_usage=$(df . | tail -1 | awk '{print $5}' | sed 's/%//')
     
     # Clean Docker resources
     print_info "Cleaning unused Docker resources..."
@@ -617,14 +680,438 @@ attempt_disk_cleanup_recovery() {
     print_info "Cleaning old log files..."
     find "$LOG_DIR" -name "*.log" -mtime +7 -delete 2>/dev/null && space_freed=true
     
+    # Clean temporary files
+    print_info "Cleaning temporary files..."
+    find /tmp -name "devflow-*" -mtime +1 -delete 2>/dev/null && space_freed=true
+    
+    # Clean Docker build cache
+    print_info "Cleaning Docker build cache..."
+    if docker builder prune -f 2>/dev/null; then
+        space_freed=true
+        print_success "Cleaned Docker build cache"
+    fi
+    
+    local final_usage=$(df . | tail -1 | awk '{print $5}' | sed 's/%//')
+    local space_recovered=$((initial_usage - final_usage))
+    
     if [[ "$space_freed" == "true" ]]; then
-        print_success "Disk cleanup completed"
-        log_message "RECOVERY" "Automatic disk cleanup successful"
+        print_success "Disk cleanup completed - recovered ${space_recovered}% disk space"
+        log_message "RECOVERY" "Automatic disk cleanup successful - recovered ${space_recovered}%"
         return 0
     else
         print_warning "Unable to free significant disk space automatically"
         return 1
     fi
+}
+
+# Automatic network recovery
+attempt_network_recovery() {
+    print_status "Attempting to recover network connectivity..."
+    
+    # Test different connectivity methods
+    local recovery_successful=false
+    
+    # Try DNS resolution
+    print_info "Testing DNS resolution..."
+    if nslookup google.com >/dev/null 2>&1; then
+        print_success "DNS resolution working"
+        recovery_successful=true
+    fi
+    
+    # Try different connectivity endpoints
+    local test_endpoints=("google.com:80" "github.com:443" "docker.io:443")
+    
+    for endpoint in "${test_endpoints[@]}"; do
+        local host=$(echo "$endpoint" | cut -d':' -f1)
+        local port=$(echo "$endpoint" | cut -d':' -f2)
+        
+        print_info "Testing connectivity to $host:$port..."
+        if timeout 5 bash -c "</dev/tcp/$host/$port" 2>/dev/null; then
+            print_success "Connection to $host:$port successful"
+            recovery_successful=true
+            break
+        fi
+    done
+    
+    if [[ "$recovery_successful" == "true" ]]; then
+        print_success "Network connectivity recovered"
+        log_message "RECOVERY" "Network connectivity recovery successful"
+        return 0
+    else
+        print_warning "Network connectivity could not be automatically recovered"
+        return 1
+    fi
+}
+
+# Automatic configuration recovery
+attempt_config_recovery() {
+    local context="$1"
+    print_status "Attempting to recover configuration for: $context"
+    
+    case "$context" in
+        "docker-compose")
+            if [[ -f "docker-compose.yml.backup" ]]; then
+                print_info "Restoring docker-compose.yml from backup..."
+                cp "docker-compose.yml.backup" "docker-compose.yml"
+                print_success "Configuration restored from backup"
+                return 0
+            fi
+            ;;
+        "env")
+            if [[ -f ".env.example" ]] && [[ ! -f ".env" ]]; then
+                print_info "Creating .env from .env.example..."
+                cp ".env.example" ".env"
+                print_success "Environment configuration created"
+                return 0
+            fi
+            ;;
+    esac
+    
+    print_warning "No automatic configuration recovery available for: $context"
+    return 1
+}
+
+# Show detailed error context information
+show_error_context_info() {
+    local error_type="$1"
+    local context="$2"
+    
+    echo -e "${CYAN}📋 ADDITIONAL INFORMATION:${NC}"
+    
+    case "$error_type" in
+        "DOCKER_NOT_RUNNING")
+            echo "   • Docker Desktop may not be started"
+            echo "   • Check if Docker Desktop is installed and running"
+            echo "   • On macOS: Look for Docker whale icon in menu bar"
+            echo "   • On Linux: Check 'systemctl status docker'"
+            ;;
+        "PORT_CONFLICT")
+            echo "   • Another application is using required ports"
+            echo "   • Common conflicting applications: other web servers, databases"
+            echo "   • Use 'lsof -i :PORT' to identify conflicting processes"
+            if [[ -n "$context" ]]; then
+                echo "   • Affected service: $context"
+            fi
+            ;;
+        "SERVICE_START_FAILED")
+            echo "   • Service dependencies may not be ready"
+            echo "   • Check service logs for detailed error information"
+            echo "   • Verify Docker container resources are sufficient"
+            if [[ -n "$context" ]]; then
+                echo "   • Failed service: $context"
+                echo "   • Log location: $LOG_DIR/${context}.log"
+            fi
+            ;;
+        "DISK_SPACE_LOW")
+            local current_usage=$(df . | tail -1 | awk '{print $5}')
+            echo "   • Current disk usage: $current_usage"
+            echo "   • Docker images and containers consume significant space"
+            echo "   • Consider cleaning unused Docker resources"
+            echo "   • Minimum recommended free space: 5GB"
+            ;;
+        "NETWORK_UNREACHABLE")
+            echo "   • Internet connectivity is required for Docker image downloads"
+            echo "   • Check firewall and proxy settings"
+            echo "   • Verify DNS resolution is working"
+            echo "   • Corporate networks may block Docker registry access"
+            ;;
+        "CONFIG_INVALID")
+            echo "   • Configuration files may be corrupted or missing"
+            echo "   • Check docker-compose.yml syntax"
+            echo "   • Verify environment variables are set correctly"
+            if [[ -n "$context" ]]; then
+                echo "   • Problematic configuration: $context"
+            fi
+            ;;
+        *)
+            echo "   • Check system logs for additional details"
+            echo "   • Ensure all system requirements are met"
+            echo "   • Consider running in diagnostic mode for verbose output"
+            ;;
+    esac
+    echo ""
+}
+
+# Offer manual recovery options to the user
+offer_manual_recovery_options() {
+    local error_type="$1"
+    local context="$2"
+    
+    echo -e "${YELLOW}🛠️  MANUAL RECOVERY OPTIONS:${NC}"
+    echo ""
+    
+    case "$error_type" in
+        "DOCKER_NOT_RUNNING")
+            echo "1. Start Docker Desktop manually"
+            echo "2. Restart Docker service: 'sudo systemctl restart docker' (Linux)"
+            echo "3. Reinstall Docker Desktop if corrupted"
+            ;;
+        "PORT_CONFLICT")
+            echo "1. Stop conflicting applications manually"
+            echo "2. Change DevFlow service ports in docker-compose.yml"
+            echo "3. Use 'sudo lsof -i :PORT' to identify and kill processes"
+            ;;
+        "SERVICE_START_FAILED")
+            echo "1. Check service logs: 'docker-compose logs $context'"
+            echo "2. Restart individual service: 'docker-compose restart $context'"
+            echo "3. Rebuild service: 'docker-compose build $context'"
+            ;;
+        "DISK_SPACE_LOW")
+            echo "1. Free up disk space manually"
+            echo "2. Clean Docker: 'docker system prune -a'"
+            echo "3. Remove unused files and applications"
+            ;;
+        "NETWORK_UNREACHABLE")
+            echo "1. Check internet connection"
+            echo "2. Configure proxy settings if behind corporate firewall"
+            echo "3. Try using mobile hotspot temporarily"
+            ;;
+        *)
+            echo "1. Run with diagnostic mode: '$0 start --diagnostic'"
+            echo "2. Check system logs and error reports"
+            echo "3. Contact support with error details"
+            ;;
+    esac
+    
+    echo ""
+    echo -n -e "${CYAN}Would you like to try a manual recovery option? [y/N]: ${NC}"
+    read -r manual_recovery
+    
+    if [[ "$manual_recovery" =~ ^[Yy] ]]; then
+        echo -n -e "${CYAN}Enter option number (or 'skip' to continue): ${NC}"
+        read -r option_choice
+        
+        if [[ "$option_choice" != "skip" ]]; then
+            print_info "Please follow the manual recovery steps above and then retry the operation"
+            echo ""
+            echo -n -e "${CYAN}Press Enter when ready to continue...${NC}"
+            read -r
+        fi
+    fi
+}
+
+# Enhanced diagnostic mode with comprehensive system analysis
+run_comprehensive_diagnostics() {
+    print_header "🔬 Comprehensive System Diagnostics"
+    
+    local diagnostic_report="$LOG_DIR/diagnostic-report-$(date +%Y%m%d-%H%M%S).txt"
+    
+    {
+        echo "DevFlow Intelligence Platform - Comprehensive Diagnostic Report"
+        echo "=============================================================="
+        echo "Generated: $(date)"
+        echo "Script Version: $SCRIPT_VERSION"
+        echo "Diagnostic Mode: ${DIAGNOSTIC_MODE:-false}"
+        echo ""
+        
+        echo "SYSTEM INFORMATION"
+        echo "=================="
+        echo "Operating System: $(uname -a)"
+        echo "Shell: $SHELL"
+        echo "User: $(whoami)"
+        echo "Working Directory: $(pwd)"
+        echo "Script Location: $SCRIPT_DIR"
+        echo ""
+        
+        echo "RESOURCE USAGE"
+        echo "=============="
+        echo "Disk Usage:"
+        df -h .
+        echo ""
+        echo "Memory Usage:"
+        if command -v free >/dev/null 2>&1; then
+            free -h
+        else
+            vm_stat 2>/dev/null | head -10
+        fi
+        echo ""
+        echo "CPU Information:"
+        if command -v lscpu >/dev/null 2>&1; then
+            lscpu | head -10
+        else
+            sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "CPU info not available"
+        fi
+        echo ""
+        
+        echo "DOCKER ENVIRONMENT"
+        echo "=================="
+        echo "Docker Version:"
+        docker --version 2>/dev/null || echo "Docker not available"
+        echo ""
+        echo "Docker Info:"
+        docker info 2>/dev/null || echo "Docker daemon not running"
+        echo ""
+        echo "Docker Compose Version:"
+        docker-compose --version 2>/dev/null || echo "Docker Compose not available"
+        echo ""
+        echo "Running Containers:"
+        docker ps -a 2>/dev/null || echo "Cannot access Docker containers"
+        echo ""
+        echo "Docker Images:"
+        docker images 2>/dev/null | head -10 || echo "Cannot access Docker images"
+        echo ""
+        
+        echo "NETWORK DIAGNOSTICS"
+        echo "==================="
+        echo "Network Interfaces:"
+        if command -v ip >/dev/null 2>&1; then
+            ip addr show | grep -E "^[0-9]+:|inet "
+        else
+            ifconfig 2>/dev/null | grep -E "^[a-z]|inet " | head -20
+        fi
+        echo ""
+        echo "DNS Resolution Test:"
+        nslookup google.com 2>/dev/null || echo "DNS resolution failed"
+        echo ""
+        echo "Connectivity Tests:"
+        for endpoint in "google.com:80" "github.com:443" "docker.io:443"; do
+            local host=$(echo "$endpoint" | cut -d':' -f1)
+            local port=$(echo "$endpoint" | cut -d':' -f2)
+            if timeout 5 bash -c "</dev/tcp/$host/$port" 2>/dev/null; then
+                echo "$endpoint: CONNECTED"
+            else
+                echo "$endpoint: FAILED"
+            fi
+        done
+        echo ""
+        
+        echo "PORT ANALYSIS"
+        echo "============="
+        echo "Required Ports Status:"
+        for port in "${REQUIRED_PORTS[@]}"; do
+            local process_info=$(lsof -ti:$port 2>/dev/null)
+            if [[ -n "$process_info" ]]; then
+                local process_name=$(ps -p $process_info -o comm= 2>/dev/null || echo "unknown")
+                echo "Port $port: OCCUPIED by $process_name (PID: $process_info)"
+            else
+                echo "Port $port: AVAILABLE"
+            fi
+        done
+        echo ""
+        
+        echo "SERVICE STATUS ANALYSIS"
+        echo "======================="
+        for service in $INFRASTRUCTURE_SERVICES $APPLICATION_SERVICES $FRONTEND_SERVICES; do
+            local status=$(get_service_status "$service")
+            local port=$(get_service_port "$service")
+            local health_cmd=$(get_health_check_command "$service")
+            
+            echo "Service: $service"
+            echo "  Status: $status"
+            echo "  Port: $port"
+            echo "  Health Check: $health_cmd"
+            
+            # Test health check
+            if [[ -n "$health_cmd" ]]; then
+                if eval "$health_cmd" &>/dev/null; then
+                    echo "  Health Test: PASSED"
+                else
+                    echo "  Health Test: FAILED"
+                fi
+            fi
+            echo ""
+        done
+        
+        echo "LOG FILE ANALYSIS"
+        echo "================="
+        echo "Recent Error Entries:"
+        if [[ -f "$LOG_DIR/error_history.log" ]]; then
+            tail -10 "$LOG_DIR/error_history.log"
+        else
+            echo "No error history found"
+        fi
+        echo ""
+        
+        echo "Recent Script Log Entries:"
+        if [[ -f "$SCRIPT_LOG" ]]; then
+            tail -20 "$SCRIPT_LOG"
+        else
+            echo "No script log found"
+        fi
+        echo ""
+        
+        echo "CONFIGURATION VALIDATION"
+        echo "========================"
+        echo "Docker Compose File:"
+        if [[ -f "docker-compose.yml" ]]; then
+            echo "  Status: EXISTS"
+            echo "  Size: $(stat -f%z docker-compose.yml 2>/dev/null || stat -c%s docker-compose.yml 2>/dev/null) bytes"
+            echo "  Syntax Check:"
+            if docker-compose config >/dev/null 2>&1; then
+                echo "    VALID"
+            else
+                echo "    INVALID"
+            fi
+        else
+            echo "  Status: MISSING"
+        fi
+        echo ""
+        
+        echo "Environment File:"
+        if [[ -f ".env" ]]; then
+            echo "  Status: EXISTS"
+            echo "  Variables: $(grep -c "=" .env 2>/dev/null || echo "0")"
+        else
+            echo "  Status: MISSING"
+        fi
+        echo ""
+        
+        echo "RECOMMENDATIONS"
+        echo "==============="
+        
+        # Analyze and provide recommendations
+        local recommendations=()
+        
+        # Check disk space
+        local disk_usage=$(df . | tail -1 | awk '{print $5}' | sed 's/%//')
+        if [[ $disk_usage -gt 85 ]]; then
+            recommendations+=("Free up disk space - current usage: ${disk_usage}%")
+        fi
+        
+        # Check Docker
+        if ! docker info &>/dev/null; then
+            recommendations+=("Start Docker Desktop or Docker daemon")
+        fi
+        
+        # Check ports
+        local occupied_count=0
+        for port in "${REQUIRED_PORTS[@]}"; do
+            if lsof -ti:$port &>/dev/null; then
+                ((occupied_count++))
+            fi
+        done
+        if [[ $occupied_count -gt 0 ]]; then
+            recommendations+=("Resolve $occupied_count port conflicts")
+        fi
+        
+        # Check network
+        if ! timeout 5 bash -c "</dev/tcp/google.com/80" 2>/dev/null; then
+            recommendations+=("Check network connectivity and DNS resolution")
+        fi
+        
+        if [[ ${#recommendations[@]} -eq 0 ]]; then
+            echo "✅ No critical issues detected"
+        else
+            for i in "${!recommendations[@]}"; do
+                echo "$((i+1)). ${recommendations[$i]}"
+            done
+        fi
+        
+    } | tee "$diagnostic_report"
+    
+    echo ""
+    print_success "Comprehensive diagnostic report saved to: $diagnostic_report"
+    
+    # Offer to view the report
+    echo ""
+    echo -n -e "${CYAN}Would you like to view the full diagnostic report? [y/N]: ${NC}"
+    read -r view_report
+    
+    if [[ "$view_report" =~ ^[Yy] ]]; then
+        less "$diagnostic_report"
+    fi
+    
+    return 0
 }
 
 # Enhanced service startup with error handling
@@ -3635,6 +4122,7 @@ show_usage() {
     echo -e "  ${GREEN}manage${NC}       Interactive management interface"
     echo -e "  ${GREEN}validate${NC}     Run environment validation only"
     echo -e "  ${GREEN}diagnostic${NC}   Run comprehensive diagnostic analysis"
+    echo -e "  ${GREEN}troubleshoot${NC} Get troubleshooting help and guidance"
     echo -e "  ${GREEN}error-report${NC} Generate detailed error report"
     echo -e "  ${GREEN}help${NC}         Show this help message"
     echo ""
@@ -3732,11 +4220,58 @@ main() {
     case "$command" in
         "start")
             print_header "🚀 DevFlow Intelligence Platform - Complete Startup"
+            
+            # Enhanced startup with comprehensive error handling
             if validate_environment_with_error_handling; then
-                start_all_services
+                print_success "✅ Environment validation passed"
+                
+                if start_all_services; then
+                    print_success "🎉 DevFlow platform started successfully!"
+                    log_message "SUCCESS" "DevFlow platform startup completed successfully"
+                else
+                    print_error "❌ Failed to start DevFlow platform"
+                    echo ""
+                    echo -e "${YELLOW}🔧 RECOVERY OPTIONS:${NC}"
+                    echo "1. Run diagnostic mode: '$0 diagnostic'"
+                    echo "2. Check service status: '$0 status'"
+                    echo "3. Generate error report: '$0 error-report'"
+                    echo "4. Try starting individual services manually"
+                    echo ""
+                    
+                    # Offer immediate recovery options
+                    echo -n -e "${CYAN}Would you like to run diagnostics now? [y/N]: ${NC}"
+                    read -r run_diagnostics
+                    
+                    if [[ "$run_diagnostics" =~ ^[Yy] ]]; then
+                        echo ""
+                        enable_diagnostic_mode
+                        run_comprehensive_diagnostics
+                    fi
+                    
+                    exit 1
+                fi
             else
-                print_error "Environment validation failed - cannot start services"
-                print_info "Use '$0 diagnostic' for detailed error analysis"
+                print_error "❌ Environment validation failed - cannot start services"
+                echo ""
+                echo -e "${YELLOW}🔧 COMMON SOLUTIONS:${NC}"
+                echo "• Ensure Docker Desktop is running"
+                echo "• Check available disk space (need >5GB free)"
+                echo "• Verify no port conflicts exist"
+                echo "• Check network connectivity"
+                echo ""
+                echo -e "${CYAN}For detailed analysis, run: '$0 diagnostic'${NC}"
+                
+                # Offer to run diagnostics immediately
+                echo ""
+                echo -n -e "${CYAN}Run diagnostic analysis now? [Y/n]: ${NC}"
+                read -r run_diagnostics
+                
+                if [[ ! "$run_diagnostics" =~ ^[Nn] ]]; then
+                    echo ""
+                    enable_diagnostic_mode
+                    run_comprehensive_diagnostics
+                fi
+                
                 exit 1
             fi
             ;;
@@ -3757,44 +4292,58 @@ main() {
             ;;
         "diagnostic")
             enable_diagnostic_mode
-            print_header "🔬 DevFlow Diagnostic Mode"
-            print_info "Running comprehensive diagnostic analysis..."
-            
-            # Run validation in diagnostic mode
-            validate_environment_with_error_handling
-            
-            # Generate error report
-            generate_error_report
-            
-            # Offer additional diagnostic options
-            echo ""
-            echo -e "${WHITE}Additional Diagnostic Options:${NC}"
-            echo -e "  ${GREEN}1.${NC} Check service health with detailed logging"
-            echo -e "  ${GREEN}2.${NC} Analyze system performance"
-            echo -e "  ${GREEN}3.${NC} Test network connectivity"
-            echo -e "  ${GREEN}4.${NC} Generate comprehensive diagnostic report"
-            echo -e "  ${GREEN}0.${NC} Exit diagnostic mode"
-            echo ""
-            echo -n -e "${CYAN}Select diagnostic option [0-4]: ${NC}"
-            
-            read -r diag_choice
-            case "$diag_choice" in
-                1) check_all_services_health ;;
-                2) performance_analysis ;;
-                3) test_network_connectivity ;;
-                4) generate_diagnostic_report ;;
-                0|*) print_info "Exiting diagnostic mode" ;;
-            esac
+            run_comprehensive_diagnostics
             ;;
         "error-report")
             print_header "📋 Error Report Generation"
             generate_error_report
             ;;
+        "troubleshoot")
+            print_header "🔧 DevFlow Troubleshooting Assistant"
+            
+            echo -e "${WHITE}Common Issues and Solutions:${NC}"
+            echo ""
+            echo -e "${CYAN}1. Docker Issues${NC}"
+            echo "   • Docker not running: Start Docker Desktop"
+            echo "   • Permission denied: Add user to docker group (Linux)"
+            echo "   • Out of disk space: Run 'docker system prune -a'"
+            echo ""
+            echo -e "${CYAN}2. Port Conflicts${NC}"
+            echo "   • Check what's using ports: 'lsof -i :PORT'"
+            echo "   • Kill conflicting processes: 'kill PID'"
+            echo "   • Change ports in docker-compose.yml"
+            echo ""
+            echo -e "${CYAN}3. Service Startup Failures${NC}"
+            echo "   • Check logs: 'docker-compose logs SERVICE'"
+            echo "   • Restart service: 'docker-compose restart SERVICE'"
+            echo "   • Rebuild service: 'docker-compose build SERVICE'"
+            echo ""
+            echo -e "${CYAN}4. Network Issues${NC}"
+            echo "   • Test connectivity: 'ping google.com'"
+            echo "   • Check DNS: 'nslookup google.com'"
+            echo "   • Configure proxy if behind corporate firewall"
+            echo ""
+            
+            echo -n -e "${CYAN}Run automated troubleshooting? [y/N]: ${NC}"
+            read -r auto_troubleshoot
+            
+            if [[ "$auto_troubleshoot" =~ ^[Yy] ]]; then
+                enable_diagnostic_mode
+                run_comprehensive_diagnostics
+            fi
+            ;;
         "help"|"--help"|"-h")
             show_usage
             ;;
         *)
-            print_error "Unknown command: $command"
+            print_error "❌ Unknown command: $command"
+            echo ""
+            echo -e "${YELLOW}💡 Did you mean one of these?${NC}"
+            echo "   • start      - Start all DevFlow services"
+            echo "   • stop       - Stop all services"
+            echo "   • status     - Check service status"
+            echo "   • diagnostic - Run comprehensive diagnostics"
+            echo "   • troubleshoot - Get troubleshooting help"
             echo ""
             show_usage
             exit 1

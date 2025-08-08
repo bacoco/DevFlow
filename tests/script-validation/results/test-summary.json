@@ -1,0 +1,12 @@
+{
+  "timestamp": "2025-08-08T10:58:14Z",
+  "totalSuites": 3,
+  "passedSuites": 3,
+  "failedSuites": 0,
+  "successRate": 100,
+  "overallStatus": "PASSED",
+  "platform": "Darwin",
+  "architecture": "arm64",
+  "reportFile": "/Users/loic/develop/kiro/tests/script-validation/results/comprehensive-test-report.md",
+  "logFile": "/Users/loic/develop/kiro/tests/script-validation/results/comprehensive-test-results.log"
+}
