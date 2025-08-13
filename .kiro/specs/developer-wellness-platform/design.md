@@ -61,7 +61,6 @@ graph TB
     GATEWAY --> BIOMETRIC
     GATEWAY --> WELLNESS
     GATEWAY --> INTERVENTION
-    GATEWAY --> MULTIMODAL
     GATEWAY --> CONTEXT
     
     BIOMETRIC --> INFLUX
@@ -69,13 +68,10 @@ graph TB
     WELLNESS --> ML
     WELLNESS --> MONGO
     INTERVENTION --> REDIS
-    MULTIMODAL --> CONTEXT
     
     BIOMETRIC --> FITBIT
     BIOMETRIC --> APPLE
     BIOMETRIC --> GARMIN
-    MULTIMODAL --> SPEECH
-    MULTIMODAL --> CAMERA
 ```
 
 ### Service Integration Strategy
@@ -85,7 +81,7 @@ The wellness platform integrates with existing DevFlow services through:
 1. **Context Engine Enhancement**: Extends existing context awareness with biometric data
 2. **ML Pipeline Extension**: Adds wellness prediction models to existing ML infrastructure
 3. **Data Ingestion Expansion**: Incorporates biometric data streams into existing ingestion pipeline
-4. **Dashboard Enhancement**: Adds wellness widgets and multi-modal controls to existing dashboard
+4. **Dashboard Enhancement**: Adds wellness widgets to existing dashboard
 
 ## Components and Interfaces
 
@@ -199,41 +195,7 @@ interface InterventionPlan {
 }
 ```
 
-### 4. Multi-Modal Interface Service (Port 3011)
 
-**Purpose**: Handles voice commands, gesture recognition, and contextual interactions
-
-**Key Components**:
-- **Voice Command Processor**: Natural language processing for voice interactions
-- **Gesture Recognition Engine**: Computer vision for gesture detection
-- **Context Adapter**: Adapts interface based on current user context
-- **Accessibility Manager**: Ensures multi-modal accessibility compliance
-
-**API Interface**:
-```typescript
-interface MultiModalInterface {
-  // Voice Commands
-  processVoiceCommand(userId: string, audioData: AudioBuffer): Promise<CommandResult>
-  registerVoiceCommand(command: VoiceCommand): Promise<void>
-  getAvailableCommands(context: UserContext): Promise<VoiceCommand[]>
-  
-  // Gesture Recognition
-  processGesture(userId: string, gestureData: GestureInput): Promise<GestureResult>
-  calibrateGestureRecognition(userId: string): Promise<CalibrationResult>
-  
-  // Context Adaptation
-  adaptInterface(userId: string, context: UserContext): Promise<InterfaceConfiguration>
-  getContextualSuggestions(userId: string): Promise<ContextualSuggestion[]>
-}
-
-interface VoiceCommand {
-  phrase: string
-  action: string
-  parameters?: Record<string, any>
-  confidence: number
-  context?: string[]
-}
-```
 
 ## Data Models
 
@@ -325,36 +287,7 @@ interface WellnessRecommendation {
 }
 ```
 
-### Multi-Modal Interaction Model
 
-```typescript
-interface UserInteractionProfile {
-  userId: string
-  preferredModalities: InteractionModality[]
-  voiceProfile: VoiceProfile
-  gestureProfile: GestureProfile
-  accessibilityNeeds: AccessibilityNeeds
-  contextualPreferences: ContextualPreference[]
-  learningData: InteractionLearningData
-}
-
-interface VoiceProfile {
-  voicePrint: string // encrypted voice signature
-  preferredLanguage: string
-  speechRate: number
-  commandAccuracy: number
-  customCommands: CustomVoiceCommand[]
-  noiseThreshold: number
-}
-
-interface GestureProfile {
-  handedness: 'LEFT' | 'RIGHT' | 'AMBIDEXTROUS'
-  gestureAccuracy: number
-  customGestures: CustomGesture[]
-  calibrationData: CalibrationData
-  environmentalFactors: EnvironmentalFactor[]
-}
-```
 
 ## Error Handling
 
@@ -378,26 +311,6 @@ interface GestureProfile {
    - Audit trail generation
    - User consent re-verification
 
-### Multi-Modal Interface Error Handling
-
-1. **Voice Recognition Failures**:
-   - Fallback to keyboard/touch input
-   - Context-aware command suggestions
-   - Noise cancellation and audio enhancement
-   - User feedback loop for accuracy improvement
-
-2. **Gesture Recognition Issues**:
-   - Camera calibration assistance
-   - Lighting condition adaptation
-   - Alternative gesture suggestions
-   - Accessibility mode activation
-
-3. **Context Misinterpretation**:
-   - User confirmation for ambiguous commands
-   - Context history for disambiguation
-   - Manual context override options
-   - Learning from correction feedback
-
 ## Testing Strategy
 
 ### Unit Testing
@@ -414,17 +327,11 @@ interface GestureProfile {
 - Recommendation relevance scoring
 - Compliance rule enforcement testing
 
-**Multi-Modal Interface Testing**:
-- Voice command recognition accuracy testing
-- Gesture recognition under various conditions
-- Context adaptation logic verification
-- Accessibility compliance testing
-
 ### Integration Testing
 
 **Cross-Service Integration**:
 - Biometric data flow through wellness intelligence
-- Context engine integration with multi-modal interface
+- Context engine integration with existing services
 - ML pipeline integration with wellness predictions
 - Real-time data synchronization testing
 
@@ -444,17 +351,16 @@ interface GestureProfile {
 
 **Performance Testing**:
 - Real-time biometric data processing under load
-- Multi-modal interface responsiveness testing
 - Wellness prediction accuracy under various data conditions
 - System scalability with multiple concurrent users
 
 ### Accessibility Testing
 
-**Multi-Modal Accessibility**:
-- Screen reader compatibility with voice commands
-- Keyboard navigation for gesture alternatives
-- High contrast mode for visual wellness indicators
-- Voice command alternatives for hearing impaired users
+**Wellness Feature Accessibility**:
+- Alternative biometric data input methods
+- Accessible wellness dashboard design
+- Intervention delivery accessibility options
+- Compliance with WCAG 2.1 AA standards
 
 **Wellness Feature Accessibility**:
 - Alternative biometric data input methods
@@ -484,27 +390,11 @@ interface GestureProfile {
    - Granular consent management
    - Right to deletion implementation
 
-### Multi-Modal Security
-
-1. **Voice Data Protection**:
-   - Local voice processing where possible
-   - Voice print encryption and secure storage
-   - Automatic voice data purging
-   - Speaker verification for sensitive commands
-
-2. **Gesture Recognition Security**:
-   - Local gesture processing to avoid data transmission
-   - Secure camera access management
-   - Gesture data anonymization
-   - Privacy-preserving gesture learning
-
 ## Performance Requirements
 
 ### Real-Time Processing
 
 - **Biometric Data Processing**: <100ms latency for real-time wellness alerts
-- **Voice Command Recognition**: <500ms response time for 95% of commands
-- **Gesture Recognition**: <200ms response time for gesture-to-action execution
 - **Wellness Prediction**: <2s response time for burnout risk assessment
 
 ### Scalability
