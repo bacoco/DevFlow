@@ -38,6 +38,31 @@
         "command": "devflow.toggleTelemetry",
         "title": "Toggle Telemetry Collection",
         "category": "DevFlow"
+      },
+      {
+        "command": "devflow.wellness.checkStatus",
+        "title": "Check Wellness Status",
+        "category": "DevFlow Wellness"
+      },
+      {
+        "command": "devflow.wellness.takeBreak",
+        "title": "Take Wellness Break",
+        "category": "DevFlow Wellness"
+      },
+      {
+        "command": "devflow.wellness.startFocusSession",
+        "title": "Start Focus Session",
+        "category": "DevFlow Wellness"
+      },
+      {
+        "command": "devflow.wellness.connectDevice",
+        "title": "Connect Wellness Device",
+        "category": "DevFlow Wellness"
+      },
+      {
+        "command": "devflow.wellness.showInsights",
+        "title": "Show Wellness Insights",
+        "category": "DevFlow Wellness"
       }
     ],
     "configuration": {

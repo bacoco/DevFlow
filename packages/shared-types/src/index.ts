@@ -364,3 +364,9 @@ export const createDefaultUserPreferences = (): UserPreferences => ({
   timezone: 'UTC',
   language: 'en'
 });
+
+// ============================================================================
+// WELLNESS TYPES AND FUNCTIONS
+// ============================================================================
+
+export * from './wellness';
